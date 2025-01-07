@@ -2,6 +2,10 @@
 
 A simple script that, when the hotkey is pressed, creates a floating window of 1 or more Maya shelves directly under your cursor. The window hides when the hotkey is released.
 
+
+https://github.com/user-attachments/assets/9d5e4220-8c22-43bc-8bd7-bdd7737511a2
+
+
 ## Requirements
 
 - Maya 2020 or higher
