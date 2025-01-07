@@ -1,3 +1,4 @@
+#spShelf v1.0.0
 import maya.cmds as cmds
 import maya.mel as mel
 import os
