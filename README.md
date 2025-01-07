@@ -9,7 +9,7 @@ A simple script that, when the hotkey is pressed, creates a floating window of 1
 
 ## Installation
 
-1. Copy `spShelf.py` to your Maya scripts folder (for example: `C:\Users\user\Documents\maya\2025\scripts`).
+1. Copy `spShelf.py` to your Maya scripts folder (for example: `%USERPROFILE%\Documents\maya\2025\scripts`).
 2. Once installed, you can assign hotkeys for the following actions:
 
    - **Press**: To show the floating shelves, use the following command in your hotkey editor:
