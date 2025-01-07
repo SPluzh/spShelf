@@ -28,6 +28,9 @@ https://github.com/user-attachments/assets/9d5e4220-8c22-43bc-8bd7-bdd7737511a2
      sp_shelf_ui(close_on_repeat=True)
      ```
 
+https://github.com/user-attachments/assets/9b196080-0b7c-4695-a98f-417f859a86ff
+     
+
 ## Usage
 
 After setting the hotkeys, pressing the assigned hotkey will display the shelves, and releasing it will hide them.
