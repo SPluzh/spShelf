@@ -8,7 +8,7 @@ https://github.com/user-attachments/assets/9d5e4220-8c22-43bc-8bd7-bdd7737511a2
 
 ## Requirements
 
-- Maya 2020 or higher
+- Maya 2022 or higher
 - Python 3
 
 ## Installation
