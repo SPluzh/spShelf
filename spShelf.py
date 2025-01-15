@@ -1,8 +1,11 @@
-#spShelf v1.0.0
+#spShelf v1.0.1
+#v1.0.0 - First version
+#v1.0.1 - Added a 0.2-second delay before closing the window. 
 import maya.cmds as cmds
 import maya.mel as mel
 import os
 import json
+import time
 try:
     from PySide6.QtGui import QCursor
 except ImportError:
@@ -213,7 +216,8 @@ def sp_shelf_ui(close_on_repeat=False, reopen=False):
     if close_on_repeat and CLOSE_ON_REPEAT_FLAG:
         if cmds.window(sp_shelf_window, exists=True):
             #save_window_and_settings(shelves, sp_shelf_window, COLUMN_COUNT, SCREEN_HEIGHT, CLOSE_ON_REPEAT_FLAG, SHOW_WINDOW_UNDER_CURSOR, SHOW_FRAME_LABEL)
-            cmds.deleteUI(sp_shelf_window, window=True)
+            time.sleep(0.2)
+            cmds.evalDeferred(lambda: cmds.deleteUI(sp_shelf_window, window=True))
             return
         else:
             return
