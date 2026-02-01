@@ -1,9 +1,11 @@
-# spShelf v1.1.0
-# v1.0.0 - First version
-# v1.0.1 - Added a 0.2-second delay before closing the window.
-# v1.1.0 - Refactored to Class-based structure, removed globals.
-#          Added auto-resizing, live settings toggles, and per-shelf label visibility.
-#          Implemented persistence for shelf collapse states and immediate saving.
+# spShelf v1.1.4
+# v1.1.4 - Added separator deletion via context menu; refined dotted style with text fallback.
+# v1.1.3 - Implemented support for separators (Standard/Dotted) and width optimization.
+# v1.1.2 - Added auto-resizing window and immediate settings persistence.
+# v1.1.1 - Implemented per-shelf label visibility and safety-expand behavior.
+# v1.1.0 - Major refactor to Class-based structure; removed all global variables.
+# v1.0.1 - Minor UI and timing fixes.
+# v1.0.0 - Original version.
 
 import maya.cmds as cmds
 import maya.mel as mel
@@ -30,7 +32,10 @@ class SpShelf:
         "SHOW_FRAME_LABEL": True, 
         "TOOLBOX_WINDOW_STYLE": False,
         "SETTINGS_COLLAPSED": True,
-        "DELETE_COLLAPSED": True
+        "DELETE_COLLAPSED": True,
+        "SHOW_SEPARATORS": True,
+        "HORIZONTAL_SEPARATORS": False,
+        "DOTTED_SEPARATORS": False
     }
 
     def __init__(self):
@@ -45,6 +50,9 @@ class SpShelf:
         self.show_window_under_cursor_toggle = None
         self.show_frame_label_toggle = None
         self.toolbox_style_window_toggle = None
+        self.show_separators_toggle = None
+        self.horizontal_separators_toggle = None
+        self.dotted_separators_toggle = None
         
         self.shelves = []
         self.window_data = self.DEFAULT_WINDOW.copy()
@@ -97,6 +105,11 @@ class SpShelf:
             if line.startswith("shelfButton"):
                 if button_data:
                     buttons.append(button_data)
+                button_data = {}
+            elif line.startswith("separator"):
+                if button_data:
+                    buttons.append(button_data)
+                buttons.append({"type": "separator"})
                 button_data = {}
             elif any(line.startswith(k) for k in ["-label", "-image", "-annotation", "-command", "-sourceType", "-doubleClickCommand"]):
                 parts = line.split("\"", 1)
@@ -222,7 +235,7 @@ class SpShelf:
     def confirm_and_delete_button(self, shelf_idx, button_idx):
         confirm = cmds.confirmDialog(
             title="Confirm Deletion",
-            message="Are you sure you want to delete this button?",
+            message="Are you sure you want to delete this item?",
             button=["Yes", "No"],
             defaultButton="No",
             cancelButton="No",
@@ -235,40 +248,96 @@ class SpShelf:
 
     def display_shelf_buttons(self, shelf_idx, parent_layout):
         shelf = self.shelves[shelf_idx]
-        grid_layout = cmds.gridLayout(parent=parent_layout, cellWidthHeight=(40, 40), autoGrow=True, numberOfColumns=self.settings["COLUMN_COUNT"])
+        col_count = self.settings["COLUMN_COUNT"]
+        show_separators = self.settings.get("SHOW_SEPARATORS", True)
+        horizontal_separators = self.settings.get("HORIZONTAL_SEPARATORS", False)
+        dotted_separators = self.settings.get("DOTTED_SEPARATORS", False)
+        
+        # Main container for the shelf content
+        shelf_content_layout = cmds.columnLayout(adjustableColumn=True, parent=parent_layout)
+        
+        # Initialize the first row
+        current_row_items = []
+        button_count_in_row = 0
+        
+        def commit_row(items):
+            if not items:
+                return
+            # Create a rowLayout for the collected items
+            row = cmds.rowLayout(numberOfColumns=len(items), parent=shelf_content_layout)
+            for item_data in items:
+                if item_data["type"] == "separator":
+                    # Determine dimensions based on orientation
+                    sep_ctrl = None
+                    if dotted_separators:
+                        if horizontal_separators:
+                            sep_ctrl = cmds.text(label=" . . . . ", parent=row, height=10, width=40, align="center")
+                        else:
+                            sep_ctrl = cmds.text(label=".\n.\n.\n.", parent=row, height=40, width=8, align="center")
+                    else:
+                        if horizontal_separators:
+                            sep_ctrl = cmds.separator(style="shelf", parent=row, height=10, width=40, horizontal=True)
+                        else:
+                            sep_ctrl = cmds.separator(style="shelf", parent=row, height=40, width=8, horizontal=False)
+                    
+                    if sep_ctrl:
+                        sep_idx = item_data["index"]
+                        sep_popup = cmds.popupMenu(parent=sep_ctrl, button=3)
+                        cmds.menuItem(label="Delete Separator", parent=sep_popup,
+                                      command=lambda _, s_idx=shelf_idx, b_idx=sep_idx: self.confirm_and_delete_button(s_idx, b_idx))
+                else:
+                    b = item_data["data"]
+                    btn_idx = item_data["index"]
+                    
+                    label = b.get("imageOverlayLabel", "")
+                    icon = b.get("image", "commandButton.png")
+                    annotation = b.get("annotation", "")
+                    command = b.get("command", "")
+                    source_type = b.get("sourceType", "mel")
+                    double_click_command = b.get("doubleClickCommand", "")
+
+                    # Create button
+                    btn = cmds.iconTextButton(commandRepeatable=True, width=40, height=40,
+                        imageOverlayLabel=label, image1=icon, parent=row,
+                        annotation=annotation,
+                        command=lambda c=command, t=source_type: self.execute_command(c, t),
+                        doubleClickCommand=lambda c=double_click_command, t=source_type: self.execute_command(c, t)
+                    )
+
+                    # Context menu
+                    popup = cmds.popupMenu(parent=btn, button=3)
+                    for item in b.get("menuItems", []):
+                        item_label = item.get("label", "Unnamed")
+                        item_command = item.get("command", "")
+                        cmds.menuItem(
+                            label=item_label, parent=popup,
+                            command=lambda _, c=item_command, t=source_type: self.execute_command(c, t)
+                        )
+
+                    cmds.menuItem(divider=True, parent=popup)
+                    cmds.menuItem(
+                        label="Delete Button", parent=popup,
+                        command=lambda _, s_idx=shelf_idx, b_idx=btn_idx: self.confirm_and_delete_button(s_idx, b_idx)
+                    )
 
         for button_index, b in enumerate(shelf["buttons"]):
-            label = b.get("imageOverlayLabel", "")
-            icon = b.get("image", "commandButton.png")
-            annotation = b.get("annotation", "")
-            command = b.get("command", "")
-            source_type = b.get("sourceType", "mel")
-            double_click_command = b.get("doubleClickCommand", "")
-
-            # Create button
-            btn = cmds.iconTextButton(commandRepeatable=True,
-                imageOverlayLabel=label, image1=icon, parent=grid_layout,
-                annotation=annotation,
-                command=lambda c=command, t=source_type: self.execute_command(c, t),
-                doubleClickCommand=lambda c=double_click_command, t=source_type: self.execute_command(c, t)
-            )
-
-            # Context menu
-            popup = cmds.popupMenu(parent=btn, button=3)
-
-            for item in b.get("menuItems", []):
-                item_label = item.get("label", "Unnamed")
-                item_command = item.get("command", "")
-                cmds.menuItem(
-                    label=item_label, parent=popup,
-                    command=lambda _, c=item_command, t=source_type: self.execute_command(c, t)
-                )
-
-            cmds.menuItem(divider=True, parent=popup)
-            cmds.menuItem(
-                label="Delete Button", parent=popup,
-                command=lambda _, s_idx=shelf_idx, b_idx=button_index: self.confirm_and_delete_button(s_idx, b_idx)
-            )
+            is_separator = b.get("type") == "separator"
+            
+            if is_separator:
+                if show_separators:
+                    current_row_items.append({"type": "separator", "index": button_index})
+            else:
+                current_row_items.append({"type": "button", "data": b, "index": button_index})
+                button_count_in_row += 1
+            
+            # If we reached the button limit (separators don't count towards the limit)
+            if button_count_in_row >= col_count:
+                commit_row(current_row_items)
+                current_row_items = []
+                button_count_in_row = 0
+        
+        # Commit the last row if any
+        commit_row(current_row_items)
 
     def save_settings_ui(self, *args):
         self.settings["COLUMN_COUNT"] = cmds.intField(self.column_input, query=True, value=True)
@@ -277,6 +346,9 @@ class SpShelf:
         self.settings["SHOW_WINDOW_UNDER_CURSOR"] = cmds.checkBox(self.show_window_under_cursor_toggle, query=True, value=True)
         self.settings["SHOW_FRAME_LABEL"] = cmds.checkBox(self.show_frame_label_toggle, query=True, value=True)
         self.settings["TOOLBOX_WINDOW_STYLE"] = cmds.checkBox(self.toolbox_style_window_toggle, query=True, value=True)
+        self.settings["SHOW_SEPARATORS"] = cmds.checkBox(self.show_separators_toggle, query=True, value=True)
+        self.settings["HORIZONTAL_SEPARATORS"] = cmds.checkBox(self.horizontal_separators_toggle, query=True, value=True)
+        self.settings["DOTTED_SEPARATORS"] = cmds.checkBox(self.dotted_separators_toggle, query=True, value=True)
         
         self.save_user_data()
         cmds.evalDeferred(lambda: self.show(reopen=True))
@@ -413,6 +485,10 @@ class SpShelf:
                                                      changeCommand=lambda x: self.toggle_frame_labels(x))
                                                      
         self.toolbox_style_window_toggle = cmds.checkBox(value=self.settings["TOOLBOX_WINDOW_STYLE"], parent=toggle_layout, label="Compact Title Bar")
+        
+        self.show_separators_toggle = cmds.checkBox(value=self.settings.get("SHOW_SEPARATORS", True), parent=toggle_layout, label="Show Separators")
+        self.horizontal_separators_toggle = cmds.checkBox(value=self.settings.get("HORIZONTAL_SEPARATORS", False), parent=toggle_layout, label="Horizontal Separators")
+        self.dotted_separators_toggle = cmds.checkBox(value=self.settings.get("DOTTED_SEPARATORS", False), parent=toggle_layout, label="Dotted Style")
 
         # Save Button
         cmds.button(backgroundColor=(0.2, 0.6, 0.8), height=30, label="Save Settings",
