@@ -1,4 +1,5 @@
-# spShelf v1.1.4
+# spShelf v1.1.5
+# v1.1.5 - Fixed shelf file search: now correctly iterates all paths in MAYA_SHELF_PATH instead of relying on Maya's broken path concatenation.
 # v1.1.4 - Added separator deletion via context menu; refined dotted style with text fallback.
 # v1.1.3 - Implemented support for separators (Standard/Dotted) and width optimization.
 # v1.1.2 - Added auto-resizing window and immediate settings persistence.
@@ -203,13 +204,52 @@ class SpShelf:
             
             self.resize_window()
 
+    def _find_shelf_file(self, shelf_name):
+        """
+        Searches for shelf_<name>.mel across all paths in MAYA_SHELF_PATH.
+        Uses MEL getenv because Maya manages MAYA_SHELF_PATH internally
+        and it may not be present in Python's os.environ.
+        Returns the first found path or None.
+        """
+        mel_filename = f"shelf_{shelf_name}.mel"
+
+        # Collect all candidate directories
+        search_dirs = []
+
+        # 1. MAYA_SHELF_PATH via MEL (Maya manages this internally)
+        try:
+            shelf_path_env = mel.eval('getenv "MAYA_SHELF_PATH"') or ''
+        except Exception:
+            shelf_path_env = os.environ.get('MAYA_SHELF_PATH', '')
+
+        for p in shelf_path_env.split(';'):
+            p = p.strip()
+            if p:
+                search_dirs.append(p)
+
+        # 2. userShelfDir — also returns the full MAYA_SHELF_PATH string with ';' separators
+        user_shelf_dir = cmds.internalVar(userShelfDir=True) or ''
+        for p in user_shelf_dir.split(';'):
+            p = p.strip()
+            if p and p not in search_dirs:
+                search_dirs.append(p)
+
+        for directory in search_dirs:
+            candidate = os.path.join(directory, mel_filename)
+            if os.path.exists(candidate):
+                return candidate
+
+        print(f"spShelf: searched in: {search_dirs}")
+        return None
+
     def add_current_shelf(self):
         shelf = cmds.shelfTabLayout("ShelfLayout", query=True, selectTab=True)
-        shelf_file = os.path.join(cmds.internalVar(userShelfDir=True), f"shelf_{shelf}.mel")
+        shelf_file = self._find_shelf_file(shelf)
 
-        if not os.path.exists(shelf_file):
-            cmds.warning(f"Shelf file not found: {shelf_file}")
+        if not shelf_file:
+            cmds.warning(f"Shelf file 'shelf_{shelf}.mel' not found in MAYA_SHELF_PATH.")
             return
+
 
         self.load_user_data() # Refresh data
         # New shelf defaults to valid settings or global default?
