@@ -1,4 +1,7 @@
-# spShelf v2.3.0 (Pure Qt / PySide rewrite)
+# spShelf v2.4.0 (Pure Qt / PySide rewrite)
+# v2.4.0 - Added Middle Mouse Button (MMB) drag-and-drop support:
+#          reorder buttons within a shelf and move buttons between shelves
+#          with animated high-contrast insertion indicators and collapsed shelf drop/expand.
 # v2.3.0 - Added floating island shelf toggle button (mel: ToggleShelf;) to the left of settings
 #          with real-time Maya shelf visibility sync and High-DPI miniature shelf icon.
 # v2.2.0 - Added compact top-right island settings button with toggleable rollout panel
@@ -298,9 +301,12 @@ class ShelfButton(QtWidgets.QToolButton):
         self.button_data = button_data
         self.shelf_index = shelf_index
         self.button_index = button_index
+        self.item_index = button_index
         self.shelf_manager = shelf_manager
         self.scale = scale
         self._is_pressed = False
+        self._mmb_pressed = False
+        self._mmb_drag_start_pos = QtCore.QPoint()
 
         self.overlay_label = button_data.get("imageOverlayLabel", "")
         self.command = button_data.get("command", "")
@@ -372,11 +378,29 @@ class ShelfButton(QtWidgets.QToolButton):
             painter.drawText(text_rect, QtCore.Qt.AlignBottom | QtCore.Qt.AlignHCenter, self.overlay_label)
 
     def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.MiddleButton:
+            self._mmb_pressed = True
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            self._mmb_drag_start_pos = pos
+            return
         if event.button() == QtCore.Qt.LeftButton:
             self._is_pressed = True
         super(ShelfButton, self).mousePressEvent(event)
 
+    def mouseMoveEvent(self, event):
+        if getattr(self, "_mmb_pressed", False) and (event.buttons() & QtCore.Qt.MiddleButton):
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            dist = (pos - self._mmb_drag_start_pos).manhattanLength()
+            if dist >= QtWidgets.QApplication.startDragDistance():
+                self._mmb_pressed = False
+                self._start_drag(pos)
+                return
+        super(ShelfButton, self).mouseMoveEvent(event)
+
     def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.MiddleButton:
+            self._mmb_pressed = False
+            return
         if event.button() == QtCore.Qt.LeftButton and self._is_pressed:
             self._is_pressed = False
             inside = self.rect().contains(event.pos())
@@ -389,6 +413,33 @@ class ShelfButton(QtWidgets.QToolButton):
                 print(f"spShelf: Action '{self.overlay_label or 'Button'}' canceled (dragged off)")
             return
         super(ShelfButton, self).mouseReleaseEvent(event)
+
+    def _start_drag(self, pos):
+        drag = QtGui.QDrag(self)
+        mime_data = QtCore.QMimeData()
+        payload = {
+            "source_shelf_idx": self.shelf_index,
+            "source_item_idx": self.item_index
+        }
+        mime_data.setData("application/x-spshelf-item", QtCore.QByteArray(json.dumps(payload).encode("utf-8")))
+        drag.setMimeData(mime_data)
+
+        pixmap = self.grab()
+        if not pixmap.isNull():
+            transparent_pix = QtGui.QPixmap(pixmap.size())
+            transparent_pix.fill(QtCore.Qt.transparent)
+            painter = QtGui.QPainter(transparent_pix)
+            painter.setOpacity(0.7)
+            painter.drawPixmap(0, 0, pixmap)
+            painter.end()
+            drag.setPixmap(transparent_pix)
+            hot_x = max(0, min(pixmap.width() - 1, pos.x()))
+            hot_y = max(0, min(pixmap.height() - 1, pos.y()))
+            drag.setHotSpot(QtCore.QPoint(hot_x, hot_y))
+
+        drag_exec = getattr(drag, "exec", getattr(drag, "exec_", None))
+        if drag_exec:
+            drag_exec(QtCore.Qt.MoveAction)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton and self.double_click_command:
@@ -418,7 +469,7 @@ class ShelfButton(QtWidgets.QToolButton):
 
 
 class SeparatorWidget(QtWidgets.QFrame):
-    """Separator line or dotted indicator for shelves."""
+    """Separator line or dotted indicator for shelves with MMB drag-and-drop support."""
     def __init__(self, horizontal=False, dotted=False, shelf_index=0, item_index=0, shelf_manager=None, scale=1.0, parent=None):
         super(SeparatorWidget, self).__init__(parent)
         self.shelf_index = shelf_index
@@ -427,6 +478,8 @@ class SeparatorWidget(QtWidgets.QFrame):
         self.horizontal = horizontal
         self.dotted = dotted
         self.scale = scale
+        self._mmb_pressed = False
+        self._mmb_drag_start_pos = QtCore.QPoint()
 
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
@@ -478,6 +531,57 @@ class SeparatorWidget(QtWidgets.QFrame):
             mid_x = w // 2
             pad_v = max(2, int(round(4 * self.scale)))
             painter.drawLine(mid_x, pad_v, mid_x, h - pad_v)
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.MiddleButton:
+            self._mmb_pressed = True
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            self._mmb_drag_start_pos = pos
+            return
+        super(SeparatorWidget, self).mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if getattr(self, "_mmb_pressed", False) and (event.buttons() & QtCore.Qt.MiddleButton):
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            dist = (pos - self._mmb_drag_start_pos).manhattanLength()
+            if dist >= QtWidgets.QApplication.startDragDistance():
+                self._mmb_pressed = False
+                self._start_drag(pos)
+                return
+        super(SeparatorWidget, self).mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.MiddleButton:
+            self._mmb_pressed = False
+            return
+        super(SeparatorWidget, self).mouseReleaseEvent(event)
+
+    def _start_drag(self, pos):
+        drag = QtGui.QDrag(self)
+        mime_data = QtCore.QMimeData()
+        payload = {
+            "source_shelf_idx": self.shelf_index,
+            "source_item_idx": self.item_index
+        }
+        mime_data.setData("application/x-spshelf-item", QtCore.QByteArray(json.dumps(payload).encode("utf-8")))
+        drag.setMimeData(mime_data)
+
+        pixmap = self.grab()
+        if not pixmap.isNull():
+            transparent_pix = QtGui.QPixmap(pixmap.size())
+            transparent_pix.fill(QtCore.Qt.transparent)
+            painter = QtGui.QPainter(transparent_pix)
+            painter.setOpacity(0.7)
+            painter.drawPixmap(0, 0, pixmap)
+            painter.end()
+            drag.setPixmap(transparent_pix)
+            hot_x = max(0, min(pixmap.width() - 1, pos.x()))
+            hot_y = max(0, min(pixmap.height() - 1, pos.y()))
+            drag.setHotSpot(QtCore.QPoint(hot_x, hot_y))
+
+        drag_exec = getattr(drag, "exec", getattr(drag, "exec_", None))
+        if drag_exec:
+            drag_exec(QtCore.Qt.MoveAction)
 
     def _show_context_menu(self, pos):
         if not self.shelf_manager:
@@ -721,10 +825,65 @@ class ShelfToggleIslandButton(QtWidgets.QToolButton):
             painter.drawRoundedRect(QtCore.QRectF(cx + 2.5 * s, cy, btn_w, btn_h), corner, corner)
 
 
+class ShelfHeaderButton(QtWidgets.QToolButton):
+    """
+    Shelf section header button with drag-and-drop acceptance:
+    - Allows dropping buttons directly onto the header to append them to the shelf.
+    - Hovering over a collapsed header for 400ms automatically expands the shelf.
+    """
+    def __init__(self, section=None, parent=None):
+        super(ShelfHeaderButton, self).__init__(parent)
+        self.section = section
+        self.setAcceptDrops(True)
+        self._hover_expand_timer = QtCore.QTimer(self)
+        self._hover_expand_timer.setSingleShot(True)
+        self._hover_expand_timer.setInterval(400)
+        self._hover_expand_timer.timeout.connect(self._on_hover_expand)
+
+    def _on_hover_expand(self):
+        if self.section and self.section._is_collapsed:
+            self.section.set_collapsed(False)
+            if self.section.on_collapse_changed:
+                self.section.on_collapse_changed(False)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat("application/x-spshelf-item") and self.section and self.section.shelf_index is not None:
+            event.acceptProposedAction()
+            if self.section._is_collapsed:
+                self._hover_expand_timer.start()
+        else:
+            super(ShelfHeaderButton, self).dragEnterEvent(event)
+
+    def dragLeaveEvent(self, event):
+        self._hover_expand_timer.stop()
+        super(ShelfHeaderButton, self).dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        self._hover_expand_timer.stop()
+        if event.mimeData().hasFormat("application/x-spshelf-item") and self.section and self.section.shelf_index is not None:
+            try:
+                raw_bytes = bytes(event.mimeData().data("application/x-spshelf-item"))
+                payload = json.loads(raw_bytes.decode("utf-8"))
+                src_shelf = payload.get("source_shelf_idx")
+                src_idx = payload.get("source_item_idx")
+                dst_shelf = self.section.shelf_index
+                target_win = self.section.shelf_window
+                if target_win and target_win.manager:
+                    dst_buttons = target_win.manager.shelves[dst_shelf].get("buttons", [])
+                    dst_idx = len(dst_buttons)
+                    target_win.manager.move_shelf_item(src_shelf, src_idx, dst_shelf, dst_idx)
+                    event.acceptProposedAction()
+                    return
+            except Exception as e:
+                log_debug(f"ShelfHeaderButton.dropEvent error: {e}")
+        super(ShelfHeaderButton, self).dropEvent(event)
+
+
 class CollapsibleSection(QtWidgets.QWidget):
     """Collapsible container representing a single Maya shelf or Settings panel."""
-    def __init__(self, title, collapsed=False, label_visible=True, on_collapse_changed=None, shelf_window=None, scale=1.0, parent=None):
+    def __init__(self, title, collapsed=False, label_visible=True, on_collapse_changed=None, shelf_window=None, scale=1.0, shelf_index=None, parent=None):
         super(CollapsibleSection, self).__init__(parent)
+        self.shelf_index = shelf_index
         self.on_collapse_changed = on_collapse_changed
         self.shelf_window = shelf_window
         self._is_collapsed = collapsed
@@ -734,8 +893,8 @@ class CollapsibleSection(QtWidgets.QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Header bar
-        self.header_btn = QtWidgets.QToolButton(self)
+        # Header bar with drag-and-drop acceptance
+        self.header_btn = ShelfHeaderButton(section=self, parent=self)
         self.header_btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self.header_btn.setText(f" {title}")
         self.header_btn.setCheckable(True)
@@ -820,6 +979,183 @@ class CollapsibleSection(QtWidgets.QWidget):
         target_win = self.shelf_window or self.window()
         if hasattr(target_win, "adjust_size_to_content"):
             target_win.adjust_size_to_content()
+
+
+class ShelfGridWidget(QtWidgets.QWidget):
+    """
+    Grid container for shelf items with support for Middle Mouse Button Drag & Drop.
+    Calculates dynamic drop insertion slot and renders high-contrast accent drop indicator.
+    """
+    def __init__(self, shelf_index, shelf_window, manager, scale=1.0, col_count=4, parent=None):
+        super(ShelfGridWidget, self).__init__(parent)
+        self.shelf_index = shelf_index
+        self.shelf_window = shelf_window
+        self.manager = manager
+        self.scale = scale
+        self.col_count = col_count
+        self.items = []
+        self._drop_indicator = None
+
+        self.setAcceptDrops(True)
+        self.grid = QtWidgets.QGridLayout(self)
+        grid_pad = max(1, int(round(2 * self.scale)))
+        base_row_spacing = self.manager.settings.get("ROW_SPACING", 1)
+        row_gap = max(0, int(round(base_row_spacing * self.scale)))
+        self.grid.setContentsMargins(grid_pad, 0, grid_pad, 0)
+        self.grid.setHorizontalSpacing(grid_pad)
+        self.grid.setVerticalSpacing(row_gap)
+        self.grid.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        self.grid.setColumnStretch(col_count, 1)
+
+    def add_shelf_item(self, widget, row, col, row_span=1, col_span=1, alignment=None):
+        if alignment is not None:
+            self.grid.addWidget(widget, row, col, row_span, col_span, alignment)
+        else:
+            self.grid.addWidget(widget, row, col, row_span, col_span)
+        self.items.append(widget)
+
+    def _calculate_target_slot(self, pos):
+        """
+        Determines the target insertion index and indicator geometry from the cursor position.
+        Returns (target_index, indicator_rect, is_horizontal).
+        """
+        shelf_buttons = self.manager.shelves[self.shelf_index].get("buttons", [])
+        total_count = len(shelf_buttons)
+
+        btn_sz = max(24, int(round(38 * self.scale)))
+        thickness = max(2, int(round(3 * self.scale)))
+
+        if not self.items:
+            pad = max(2, int(round(2 * self.scale)))
+            rect = QtCore.QRect(pad, pad, thickness, btn_sz)
+            return 0, rect, False
+
+        px, py = pos.x(), pos.y()
+        closest_w = None
+        min_dist = float("inf")
+
+        for w in self.items:
+            geo = w.geometry()
+            cx = geo.center().x()
+            cy = geo.center().y()
+            dist = (px - cx) ** 2 + (py - cy) ** 2
+            if dist < min_dist:
+                min_dist = dist
+                closest_w = w
+
+        if not closest_w:
+            return total_count, None, False
+
+        geo = closest_w.geometry()
+        item_idx = getattr(closest_w, "item_index", 0)
+        is_horiz_sep = getattr(closest_w, "horizontal", False)
+
+        if is_horiz_sep:
+            if py < geo.center().y():
+                target_idx = item_idx
+                y = max(0, geo.top() - thickness // 2)
+            else:
+                target_idx = item_idx + 1
+                y = min(self.height() - thickness, geo.bottom() - thickness // 2)
+            rect = QtCore.QRect(geo.left(), y, geo.width(), thickness)
+            return target_idx, rect, True
+        else:
+            spacing = self.grid.horizontalSpacing()
+            if px < geo.center().x():
+                target_idx = item_idx
+                x = geo.left() - (spacing + thickness) // 2
+            else:
+                target_idx = item_idx + 1
+                x = geo.right() + spacing // 2
+            x = max(0, min(self.width() - thickness, x))
+            rect = QtCore.QRect(x, geo.top(), thickness, geo.height())
+            return target_idx, rect, False
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat("application/x-spshelf-item"):
+            event.acceptProposedAction()
+        else:
+            super(ShelfGridWidget, self).dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat("application/x-spshelf-item"):
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            target_idx, rect, is_horiz = self._calculate_target_slot(pos)
+            self._drop_indicator = {
+                "target_index": target_idx,
+                "rect": rect,
+                "horizontal": is_horiz
+            }
+            self.update()
+            event.acceptProposedAction()
+        else:
+            super(ShelfGridWidget, self).dragMoveEvent(event)
+
+    def dragLeaveEvent(self, event):
+        self._drop_indicator = None
+        self.update()
+        super(ShelfGridWidget, self).dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        indicator = self._drop_indicator
+        self._drop_indicator = None
+        self.update()
+
+        if event.mimeData().hasFormat("application/x-spshelf-item"):
+            try:
+                raw = bytes(event.mimeData().data("application/x-spshelf-item"))
+                payload = json.loads(raw.decode("utf-8"))
+                src_shelf = payload.get("source_shelf_idx")
+                src_idx = payload.get("source_item_idx")
+
+                if indicator and "target_index" in indicator:
+                    dst_idx = indicator["target_index"]
+                else:
+                    pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+                    dst_idx, _, _ = self._calculate_target_slot(pos)
+
+                self.manager.move_shelf_item(src_shelf, src_idx, self.shelf_index, dst_idx)
+                event.acceptProposedAction()
+                return
+            except Exception as e:
+                log_debug(f"ShelfGridWidget dropEvent error: {e}")
+        super(ShelfGridWidget, self).dropEvent(event)
+
+    def paintEvent(self, event):
+        super(ShelfGridWidget, self).paintEvent(event)
+        if self._drop_indicator and self._drop_indicator.get("rect"):
+            painter = QtGui.QPainter(self)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+
+            rect = self._drop_indicator["rect"]
+            is_horiz = self._drop_indicator.get("horizontal", False)
+
+            accent_color = QtGui.QColor("#00e5ff")
+            glow_color = QtGui.QColor(0, 229, 255, 80)
+
+            # Draw outer glow
+            glow_pad = max(1, int(round(1.5 * self.scale)))
+            glow_rect = rect.adjusted(-glow_pad, -glow_pad, glow_pad, glow_pad)
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QBrush(glow_color))
+            painter.drawRoundedRect(glow_rect, glow_pad, glow_pad)
+
+            # Draw core line
+            painter.setBrush(QtGui.QBrush(accent_color))
+            radius = max(1, int(round(1 * self.scale)))
+            painter.drawRoundedRect(rect, radius, radius)
+
+            # Draw accent dots at endpoints
+            dot_r = max(2, int(round(2.5 * self.scale)))
+            painter.setBrush(QtGui.QBrush(QtGui.QColor("#ffffff")))
+            if is_horiz:
+                painter.drawEllipse(QtCore.QPointF(rect.left(), rect.center().y()), dot_r, dot_r)
+                painter.drawEllipse(QtCore.QPointF(rect.right(), rect.center().y()), dot_r, dot_r)
+            else:
+                painter.drawEllipse(QtCore.QPointF(rect.center().x(), rect.top()), dot_r, dot_r)
+                painter.drawEllipse(QtCore.QPointF(rect.center().x(), rect.bottom()), dot_r, dot_r)
+
+            painter.end()
 
 
 class AdaptiveScrollArea(QtWidgets.QScrollArea):
@@ -1113,6 +1449,10 @@ class SpShelfWindow(QtWidgets.QWidget):
 
     def rebuild_content(self):
         """Clears and re-populates shelves and settings widgets."""
+        cur_vscroll = 0
+        if hasattr(self, "scroll_area") and self.scroll_area and self.scroll_area.verticalScrollBar():
+            cur_vscroll = self.scroll_area.verticalScrollBar().value()
+
         # Clear existing items
         self.shelf_sections = []
         while self.container_layout.count():
@@ -1142,6 +1482,7 @@ class SpShelfWindow(QtWidgets.QWidget):
                 on_collapse_changed=lambda col, idx=shelf_idx: self.manager.on_shelf_collapse(idx, col),
                 shelf_window=self,
                 scale=self.scale,
+                shelf_index=shelf_idx,
                 parent=self.container
             )
             self.shelf_sections.append(section)
@@ -1152,21 +1493,19 @@ class SpShelfWindow(QtWidgets.QWidget):
                 lambda pos, idx=shelf_idx, sec=section: self._show_shelf_header_menu(pos, idx, sec, sec.header_btn)
             )
 
-            # Grid layout for buttons
-            grid_widget = QtWidgets.QWidget(section.content_widget)
+            # Grid layout container with MMB Drag & Drop support
+            grid_widget = ShelfGridWidget(
+                shelf_index=shelf_idx,
+                shelf_window=self,
+                manager=self.manager,
+                scale=self.scale,
+                col_count=col_count,
+                parent=section.content_widget
+            )
             grid_widget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
             grid_widget.customContextMenuRequested.connect(
                 lambda pos, idx=shelf_idx, sec=section, gw=grid_widget: self._show_shelf_header_menu(pos, idx, sec, gw)
             )
-            grid = QtWidgets.QGridLayout(grid_widget)
-            grid_pad = max(1, int(round(2 * self.scale)))
-            base_row_spacing = self.manager.settings.get("ROW_SPACING", 1)
-            row_gap = max(0, int(round(base_row_spacing * self.scale)))
-            grid.setContentsMargins(grid_pad, 0, grid_pad, 0)
-            grid.setHorizontalSpacing(grid_pad)
-            grid.setVerticalSpacing(row_gap)
-            grid.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
-            grid.setColumnStretch(col_count, 1)
 
             cur_row = 0
             cur_col = 0
@@ -1191,10 +1530,10 @@ class SpShelfWindow(QtWidgets.QWidget):
                         if cur_col > 0:
                             cur_row += 1
                             cur_col = 0
-                        grid.addWidget(sep, cur_row, 0, 1, col_count + 1)
+                        grid_widget.add_shelf_item(sep, cur_row, 0, 1, col_count + 1)
                         cur_row += 1
                     else:
-                        grid.addWidget(sep, cur_row, cur_col, QtCore.Qt.AlignHCenter)
+                        grid_widget.add_shelf_item(sep, cur_row, cur_col, alignment=QtCore.Qt.AlignHCenter)
                         cur_col += 1
                         if cur_col >= col_count:
                             cur_col = 0
@@ -1208,7 +1547,7 @@ class SpShelfWindow(QtWidgets.QWidget):
                         scale=self.scale,
                         parent=grid_widget
                     )
-                    grid.addWidget(btn, cur_row, cur_col)
+                    grid_widget.add_shelf_item(btn, cur_row, cur_col)
                     cur_col += 1
                     if cur_col >= col_count:
                         cur_col = 0
@@ -1231,6 +1570,8 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.container_layout.addStretch()
 
         self.adjust_size_to_content()
+        if cur_vscroll > 0 and hasattr(self, "scroll_area") and self.scroll_area:
+            QtCore.QTimer.singleShot(15, lambda: self.scroll_area.verticalScrollBar().setValue(cur_vscroll))
 
     def adjust_size_to_content(self):
         """Triggers size adjustment immediately and with a short deferral for Maya."""
@@ -1746,6 +2087,45 @@ class SpShelf:
                 self.save_user_data()
                 if self.window_widget:
                     self.window_widget.rebuild_content()
+
+    def move_shelf_item(self, source_shelf_idx, source_item_idx, target_shelf_idx, target_item_idx):
+        """
+        Moves an item (button or separator) from source shelf to target shelf.
+        Supports both intra-shelf reordering and inter-shelf transfers with immediate JSON persistence.
+        """
+        log_debug(f"move_shelf_item: src=({source_shelf_idx}, {source_item_idx}) -> dst=({target_shelf_idx}, {target_item_idx})")
+        if not (0 <= source_shelf_idx < len(self.shelves)):
+            return
+        if not (0 <= target_shelf_idx < len(self.shelves)):
+            return
+
+        src_shelf = self.shelves[source_shelf_idx]
+        src_buttons = src_shelf.setdefault("buttons", [])
+        if not (0 <= source_item_idx < len(src_buttons)):
+            return
+
+        dst_shelf = self.shelves[target_shelf_idx]
+        dst_buttons = dst_shelf.setdefault("buttons", [])
+
+        target_item_idx = max(0, min(target_item_idx, len(dst_buttons)))
+
+        if source_shelf_idx == target_shelf_idx:
+            # Intra-shelf reordering: dropping back to the exact same position is a no-op
+            if target_item_idx == source_item_idx or target_item_idx == source_item_idx + 1:
+                return
+
+            item = src_buttons.pop(source_item_idx)
+            if source_item_idx < target_item_idx:
+                target_item_idx -= 1
+            src_buttons.insert(target_item_idx, item)
+        else:
+            # Inter-shelf transfer
+            item = src_buttons.pop(source_item_idx)
+            dst_buttons.insert(target_item_idx, item)
+
+        self.save_user_data()
+        if self.window_widget:
+            self.window_widget.rebuild_content()
 
     def confirm_and_delete_button(self, shelf_idx, button_idx):
         res = cmds.confirmDialog(

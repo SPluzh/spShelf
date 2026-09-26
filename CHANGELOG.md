@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0]
+- **UX/Interactivity**: Implemented native Maya-style Middle Mouse Button (**MMB**) drag-and-drop reordering:
+    - **Intra-shelf reordering**: Dragging buttons or separators within the same shelf dynamically rearranges their positions.
+    - **Inter-shelf transfer**: Dragging items across different shelves transfers them seamlessly to the target shelf.
+    - **Visual Drop Indicator**: Real-time high-contrast cyan glow insertion marker (`#00e5ff`) with rounded endpoints indicating the exact slot where the item will land.
+    - **Ghost Preview**: Semi-transparent (70% opacity) button/separator snapshot under cursor during drag session (`QDrag`).
+    - **Collapsed Shelf Drop & Auto-Expand**: Dropping directly onto a shelf header button appends the item to that shelf, while hovering over a collapsed header for 400ms automatically expands the shelf to allow precision placement.
+    - **Data Persistence**: Immediate JSON persistence via `move_shelf_item()` and non-jumping scroll preservation across rebuilds.
+    - **Version Compatibility**: Full cross-version compatibility supporting PySide2 (Maya 2020–2024) and PySide6 (Maya 2025+).
+
 ## [2.3.0]
 - **UI/UX**: Added a floating island button to toggle Maya's native shelves (`mel: ToggleShelf;`) positioned immediately to the left of the settings button:
     - Sized and styled identically to the settings island button (compact ~20px with DPI scaling, rounded geometry, smooth hover/pressed states).
