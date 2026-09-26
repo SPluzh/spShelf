@@ -2,11 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.2]
+- **Standard Maya Dark Menu Theme Color (`#525252`) & Configurable Base Font Size Setting**:
+    - Updated background color of all dropdown and popup menus to Maya's native menu tone `#525252` (`QMenu` and `QComboBox QAbstractItemView`).
+    - Standardized menu styling across both main `SpShelfWindow` and `ButtonEditorDialog`, ensuring button context menus, separator menus, header menus, combobox dropdown lists, and color picker menus have consistent contrast against window surfaces.
+    - Added configurable **`FONT_SIZE`** setting (default `13 px`, range 8-30 px) with dedicated spinbox in the Settings panel.
+    - Added real-time live preview update (`_on_font_size_live_changed`) dynamically updating all dropdown menus (`QMenu`, `QComboBox` popups) and collapsible shelf headers (`CollapsibleSection`) without needing a window reload.
+
 ## [2.3.1]
 - **Fixed Separator Parsing When Adding Shelves from MEL**:
-    - Fixed an issue in [`parse_shelf_file`](file:///c:/Users/user/Desktop/python/spShelf/spShelf.py) where flags belonging to a `separator` command (such as `-width 12` and `-style "shelf"`) were mistakenly parsed as attributes of a subsequent `shelfButton`, creating phantom empty buttons after each separator.
-    - Added state tracking (`current_command`) and identity validation in [`_finalize_item`](file:///c:/Users/user/Desktop/python/spShelf/spShelf.py) to guarantee that non-button commands do not pollute shelf buttons.
-    - Added auto-sanitizing filter in [`load_user_data`](file:///c:/Users/user/Desktop/python/spShelf/spShelf.py) to automatically strip orphaned/empty corrupted buttons from `sp_shelf_data.json`.
+    - Fixed an issue in `parse_shelf_file` where flags belonging to a `separator` command (such as `-width 12` and `-style "shelf"`) were mistakenly parsed as attributes of a subsequent `shelfButton`, creating phantom empty buttons after each separator.
+    - Added state tracking (`current_command`) and identity validation in `_finalize_item` to guarantee that non-button commands do not pollute shelf buttons.
+    - Added auto-sanitizing filter in `load_user_data` to automatically strip orphaned/empty corrupted buttons from `sp_shelf_data.json`.
 
 ## [2.3.0]
 - **Interactive Button Editor Dialog with Live Preview**:

@@ -1,4 +1,5 @@
-# spShelf v2.3.1 (Pure Qt / PySide rewrite)
+# spShelf v2.3.2 (Pure Qt / PySide rewrite)
+# v2.3.2 - Set standard Maya dark color #525252 for dropdown/popup menus and added configurable FONT_SIZE setting (default 13px).
 # v2.3.1 - Fixed separator parsing when importing shelves from MEL (parse_shelf_file):
 #          separator flags are no longer captured as button properties, preventing empty buttons.
 #          Added self-healing filter in load_user_data for orphaned/empty button entries.
@@ -1512,11 +1513,22 @@ class ButtonEditorDialog(QtWidgets.QDialog):
     def _apply_stylesheet(self):
         s = self.scale
         font_sz = max(9, int(round(11 * s)))
+        base_font_sz = 13
+        if self.shelf_manager and hasattr(self.shelf_manager, "settings"):
+            base_font_sz = self.shelf_manager.settings.get("FONT_SIZE", 13)
+        try:
+            base_font_sz = int(base_font_sz)
+        except (ValueError, TypeError):
+            base_font_sz = 13
+        menu_font_sz = max(9, int(round(base_font_sz * s)))
         chk_sz = max(12, int(round(14 * s)))
         btn_pad_v = max(3, int(round(5 * s)))
         btn_pad_h = max(8, int(round(12 * s)))
         radius_sm = max(2, int(round(3 * s)))
         radius_md = max(3, int(round(4 * s)))
+        menu_pad = max(2, int(round(4 * s)))
+        menu_item_pad_v = max(2, int(round(4 * s)))
+        menu_item_pad_h = max(10, int(round(16 * s)))
 
         btn_r_setting = 1
         if self.shelf_manager and hasattr(self.shelf_manager, "settings"):
@@ -1628,12 +1640,12 @@ class ButtonEditorDialog(QtWidgets.QDialog):
                 border-top: 5px solid #cccccc;
             }}
             QComboBox QAbstractItemView {{
-                background-color: #373737;
+                background-color: #525252;
                 color: #ffffff;
                 selection-background-color: #5285a6;
                 selection-color: #ffffff;
                 border: 1px solid #444444;
-                font-size: {font_sz}px;
+                font-size: {menu_font_sz}px;
             }}
             QCheckBox, QRadioButton {{
                 color: #cccccc;
@@ -1743,6 +1755,28 @@ class ButtonEditorDialog(QtWidgets.QDialog):
                 border: 1px solid #373737;
                 border-radius: {btn_radius}px;
                 padding: 1px 0px 0px 1px;
+            }}
+            QMenu {{
+                background-color: #525252;
+                color: #e0e0e0;
+                border: 1px solid #444444;
+                padding: {menu_pad}px;
+                font-size: {menu_font_sz}px;
+            }}
+            QMenu::item {{
+                padding: {menu_item_pad_v}px {menu_item_pad_h}px;
+            }}
+            QMenu::item:selected {{
+                background-color: #5285a6;
+                color: #ffffff;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background-color: #444444;
+                margin: 2px 4px;
+            }}
+            QMenu::item:disabled {{
+                color: #777777;
             }}
         """)
 
@@ -2711,27 +2745,7 @@ class CollapsibleSection(QtWidgets.QWidget):
         self.header_btn.setChecked(not collapsed)
         self.header_btn.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         
-        header_h = max(20, int(round(22 * self.scale)))
-        self.header_btn.setFixedHeight(header_h)
-        font_sz = max(9, int(round(11 * self.scale)))
-        pad_l = max(3, int(round(4 * self.scale)))
-        radius = max(1, int(round(2 * self.scale)))
-
-        self.header_btn.setStyleSheet(f"""
-            QToolButton {{
-                background-color: #444444;
-                border: 1px solid #373737;
-                color: #e0e0e0;
-                font-weight: bold;
-                font-size: {font_sz}px;
-                text-align: left;
-                padding-left: {pad_l}px;
-            }}
-            QToolButton:hover {{
-                background-color: #525252;
-                border-color: #5a5a5a;
-            }}
-        """)
+        self.update_font_size()
         self.header_btn.clicked.connect(self._toggle_collapse)
 
         # Content container
@@ -2789,6 +2803,37 @@ class CollapsibleSection(QtWidgets.QWidget):
         target_win = self.shelf_window or self.window()
         if hasattr(target_win, "adjust_size_to_content"):
             target_win.adjust_size_to_content()
+
+    def update_font_size(self, base_font_sz=None):
+        if base_font_sz is None:
+            base_font_sz = 13
+            if self.shelf_window and hasattr(self.shelf_window, "manager") and self.shelf_window.manager:
+                base_font_sz = self.shelf_window.manager.settings.get("FONT_SIZE", 13)
+        try:
+            base_font_sz = int(base_font_sz)
+        except (ValueError, TypeError):
+            base_font_sz = 13
+
+        font_sz = max(9, int(round(base_font_sz * self.scale)))
+        header_h = max(20, int(round(max(22, base_font_sz + 8) * self.scale)))
+        self.header_btn.setFixedHeight(header_h)
+        pad_l = max(3, int(round(4 * self.scale)))
+
+        self.header_btn.setStyleSheet(f"""
+            QToolButton {{
+                background-color: #444444;
+                border: 1px solid #373737;
+                color: #e0e0e0;
+                font-weight: bold;
+                font-size: {font_sz}px;
+                text-align: left;
+                padding-left: {pad_l}px;
+            }}
+            QToolButton:hover {{
+                background-color: #525252;
+                border-color: #5a5a5a;
+            }}
+        """)
 
 
 class ShelfGridWidget(QtWidgets.QWidget):
@@ -3059,6 +3104,14 @@ class SpShelfWindow(QtWidgets.QWidget):
     def _apply_stylesheet(self):
         s = self.scale
         font_sz = max(9, int(round(11 * s)))
+        base_font_sz = 13
+        if self.manager and hasattr(self.manager, "settings"):
+            base_font_sz = self.manager.settings.get("FONT_SIZE", 13)
+        try:
+            base_font_sz = int(base_font_sz)
+        except (ValueError, TypeError):
+            base_font_sz = 13
+        menu_font_sz = max(9, int(round(base_font_sz * s)))
         chk_sz = max(12, int(round(14 * s)))
         chk_spacing = max(4, int(round(6 * s)))
         btn_pad_v = max(2, int(round(4 * s)))
@@ -3187,12 +3240,12 @@ class SpShelfWindow(QtWidgets.QWidget):
                 margin-right: {arrow_margin}px;
             }}
             QComboBox QAbstractItemView {{
-                background-color: #373737;
+                background-color: #525252;
                 color: #ffffff;
                 selection-background-color: #5285a6;
                 selection-color: #ffffff;
                 border: 1px solid #444444;
-                font-size: {font_sz}px;
+                font-size: {menu_font_sz}px;
             }}
             QPushButton {{
                 background-color: #444444;
@@ -3225,11 +3278,11 @@ class SpShelfWindow(QtWidgets.QWidget):
                 height: 0px;
             }}
             QMenu {{
-                background-color: #373737;
+                background-color: #525252;
                 color: #e0e0e0;
                 border: 1px solid #444444;
                 padding: {menu_pad}px;
-                font-size: {font_sz}px;
+                font-size: {menu_font_sz}px;
             }}
             QMenu::item {{
                 padding: {menu_item_pad_v}px {menu_item_pad_h}px;
@@ -3242,6 +3295,9 @@ class SpShelfWindow(QtWidgets.QWidget):
                 height: 1px;
                 background-color: #444444;
                 margin: 2px 4px;
+            }}
+            QMenu::item:disabled {{
+                color: #777777;
             }}
         """)
 
@@ -3709,6 +3765,21 @@ class SpShelfWindow(QtWidgets.QWidget):
         btn_radius_layout.addWidget(self.btn_radius_spin)
         layout.addLayout(btn_radius_layout)
 
+        # Base font size row
+        font_size_layout = QtWidgets.QHBoxLayout()
+        font_size_lbl = QtWidgets.QLabel("Font size:", settings_section)
+        font_size_lbl.setStyleSheet(f"color: #cccccc; font-size: {font_sz}px;")
+        self.font_size_spin = QtWidgets.QSpinBox(settings_section)
+        self.font_size_spin.setFixedHeight(btn_h)
+        self.font_size_spin.setRange(8, 30)
+        self.font_size_spin.setSuffix(" px")
+        font_size_val = self.manager.settings.get("FONT_SIZE", 13)
+        self.font_size_spin.setValue(int(font_size_val))
+        self.font_size_spin.valueChanged.connect(self._on_font_size_live_changed)
+        font_size_layout.addWidget(font_size_lbl)
+        font_size_layout.addWidget(self.font_size_spin)
+        layout.addLayout(font_size_layout)
+
         # Checkboxes
         self.cb_close_repeat = QtWidgets.QCheckBox("Close on Key Release", settings_section)
         self.cb_close_repeat.setChecked(self.manager.settings.get("CLOSE_ON_REPEAT_FLAG", False))
@@ -3784,10 +3855,23 @@ class SpShelfWindow(QtWidgets.QWidget):
         self._apply_stylesheet()
         self.update()
 
+    def _on_font_size_live_changed(self, val):
+        """Live updates base font size across menus and shelf headers."""
+        self.manager.settings["FONT_SIZE"] = val
+        self._apply_stylesheet()
+        for sec in self.shelf_sections:
+            if hasattr(sec, "update_font_size"):
+                sec.update_font_size(val)
+        if hasattr(self, "settings_section") and hasattr(self.settings_section, "update_font_size"):
+            self.settings_section.update_font_size(val)
+        self.adjust_size_to_content()
+        self.update()
+
     def _save_settings_from_ui(self):
         self.manager.settings["COLUMN_COUNT"] = self.col_spin.value()
         self.manager.settings["ROW_SPACING"] = self.row_spacing_spin.value()
         self.manager.settings["BUTTON_RADIUS"] = self.btn_radius_spin.value()
+        self.manager.settings["FONT_SIZE"] = self.font_size_spin.value()
         self.manager.settings["CLOSE_ON_REPEAT_FLAG"] = self.cb_close_repeat.isChecked()
         self.manager.settings["SHOW_WINDOW_UNDER_CURSOR"] = self.cb_under_cursor.isChecked()
         show_frame_label = self.cb_show_label.isChecked()
@@ -3882,6 +3966,7 @@ class SpShelf:
         "COLUMN_COUNT": 4,
         "ROW_SPACING": 1,
         "BUTTON_RADIUS": 1,
+        "FONT_SIZE": 13,
         "SCALE_MODE": "auto",
         "CUSTOM_SCALE": 100,
         "CLOSE_ON_REPEAT_FLAG": False,
