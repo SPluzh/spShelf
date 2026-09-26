@@ -1,4 +1,6 @@
-# spShelf v2.2.1 (Pure Qt / PySide rewrite)
+# spShelf v2.2.2 (Pure Qt / PySide rewrite)
+# v2.2.2 - Added white triangle indicator in the bottom-right corner for shelf buttons
+#          with custom drop-down / popup menu items, matching native Maya shelf behavior.
 # v2.2.1 - Filter out Maya's internal default shelf button RMB popup items (/*dSBRMBMI*/ Open, Edit, Edit Popup, Delete)
 #          when dragging buttons from native Maya shelves into spShelf.
 # v2.2.0 - Added full support for shelf buttons with Option Box menu items (-mio / -menuItemWithOptionBox):
@@ -446,6 +448,21 @@ class ShelfButton(QtWidgets.QToolButton):
         icon_name = button_data.get("image", "commandButton.png")
         self._pixmap = get_maya_pixmap(icon_name)
 
+    @property
+    def has_custom_menu(self):
+        """Checks if the button has user-defined custom popup/dropdown menu items."""
+        menu_items = self.button_data.get("menuItems")
+        if not menu_items or not isinstance(menu_items, list):
+            return False
+        for item in menu_items:
+            if not isinstance(item, dict):
+                continue
+            cmd = item.get("command", "")
+            lbl = item.get("label", "")
+            if not is_default_maya_menu_item(cmd, lbl) and (cmd or lbl):
+                return True
+        return False
+
     def paintEvent(self, event):
         super(ShelfButton, self).paintEvent(event)
 
@@ -569,6 +586,40 @@ class ShelfButton(QtWidgets.QToolButton):
             # Bright foreground text
             painter.setPen(fg_color)
             painter.drawText(text_rect, QtCore.Qt.AlignBottom | QtCore.Qt.AlignHCenter, self.overlay_label)
+
+        # 4. Custom popup/dropdown menu indicator (white triangle in bottom right corner)
+        if self.has_custom_menu:
+            if painter is None:
+                painter = QtGui.QPainter(self)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+
+            tri_size = max(4.0, 5.0 * self.scale)
+            margin = max(2.0, 2.5 * self.scale)
+            down_offset = 1.0 if self.isDown() else 0.0
+
+            br_x = float(self.rect().width()) - margin + down_offset
+            br_y = float(self.rect().height()) - margin + down_offset
+
+            # Subtle drop shadow for high contrast on light/white button icons
+            shadow_offset = max(0.5, round(0.7 * self.scale))
+            shadow_poly = QtGui.QPolygonF([
+                QtCore.QPointF(br_x, br_y - tri_size),
+                QtCore.QPointF(br_x, br_y),
+                QtCore.QPointF(br_x - tri_size, br_y)
+            ]).translated(shadow_offset, shadow_offset)
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 0, 0, 160)))
+            painter.drawPolygon(shadow_poly)
+
+            # Main white triangle with delicate dark border for maximum sharpness
+            tri_poly = QtGui.QPolygonF([
+                QtCore.QPointF(br_x, br_y - tri_size),
+                QtCore.QPointF(br_x, br_y),
+                QtCore.QPointF(br_x - tri_size, br_y)
+            ])
+            painter.setPen(QtGui.QPen(QtGui.QColor(25, 25, 25, 180), max(0.5, 0.6 * self.scale)))
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 255)))
+            painter.drawPolygon(tri_poly)
 
         if painter is not None:
             painter.end()
@@ -2901,6 +2952,8 @@ class SpShelf:
                     raw_opt = m.group(3)
                     label = raw_label.replace(r'\"', '"').replace(r'\\', '\\')
                     clean_cmd, cmd_type = extract_command_and_type(raw_cmd.replace(r'\"', '"').replace(r'\\', '\\'))
+                    if is_default_maya_menu_item(clean_cmd, label):
+                        continue
                     clean_opt, opt_type = extract_command_and_type(raw_opt.replace(r'\"', '"').replace(r'\\', '\\'))
                     button_data.setdefault("menuItems", []).append({
                         "label": label,
@@ -2916,6 +2969,8 @@ class SpShelf:
                     label = raw_label.replace(r'\"', '"').replace(r'\\', '\\')
                     unescaped_cmd = raw_cmd.replace(r'\"', '"').replace(r'\\', '\\')
                     clean_cmd, cmd_type = extract_command_and_type(unescaped_cmd)
+                    if is_default_maya_menu_item(clean_cmd, label):
+                        continue
                     button_data.setdefault("menuItems", []).append({
                         "label": label,
                         "command": clean_cmd,
