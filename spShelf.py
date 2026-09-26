@@ -3055,13 +3055,26 @@ class ShelfGridWidget(QtWidgets.QWidget):
                 shelf_name = self.manager.shelves[self.shelf_index].get("name", "")
 
             font = painter.font()
-            font_sz = max(8, int(round(10 * self.scale)))
-            font.setPointSize(font_sz)
+            if hasattr(font, "setPointSizeF"):
+                font.setPointSizeF(6.5 * self.scale)
+            else:
+                font.setPointSize(max(5, int(round(6.5 * self.scale))))
             painter.setFont(font)
             painter.setPen(QtGui.QColor(200, 200, 200, 120))
 
-            text = f"Empty Shelf ({shelf_name}) — Drop items here" if shelf_name else "Empty Shelf — Drop items here"
-            painter.drawText(rect, QtCore.Qt.AlignCenter, text)
+            fm = QtGui.QFontMetrics(font)
+            measure_w = fm.horizontalAdvance if hasattr(fm, "horizontalAdvance") else fm.width
+
+            text = f"Empty Shelf ({shelf_name}) - Drop items here" if shelf_name else "Empty Shelf - Drop items here"
+            avail_w = max(10, rect.width() - pad * 2)
+
+            if measure_w(text) > avail_w:
+                text = "Empty Shelf - Drop items here"
+            if measure_w(text) > avail_w:
+                text = "Drop items here"
+
+            elided_text = fm.elidedText(text, QtCore.Qt.ElideRight, avail_w)
+            painter.drawText(rect, QtCore.Qt.AlignCenter, elided_text)
             painter.end()
 
         if self._drop_indicator and self._drop_indicator.get("rect"):
