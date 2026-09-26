@@ -3,6 +3,7 @@
 All notable changes to this project will be documented in this file.
 
 ## [2.1.1]
+- **Fix**: Fixed shelf buttons remaining in dark/pressed state after being clicked. Properly dispatched mouse release and double-click events to base Qt handler and ensured `isDown` state resets immediately.
 - **UI**: Set shelf button default background to transparent (matching Maya's default shelf buttons) with clean hover and pressed state highlights.
 - **Fix/DPI**: Fixed shelf button icons not scaling under DPI / UI Scale. Bypassed Maya's QStyle 32px raster clamping by implementing direct High-DPI QPixmap loading (supporting `_200`, `_150`, `@2x`) and smooth scaled painter rendering stretching across the full button.
 - **UI**: Centered button overlay labels horizontally and reduced font size for cleaner presentation and better fit.

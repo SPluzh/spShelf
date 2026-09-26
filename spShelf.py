@@ -230,6 +230,7 @@ class ShelfButton(QtWidgets.QToolButton):
         btn_sz = max(24, int(round(38 * self.scale)))
         self.setFixedSize(btn_sz, btn_sz)
         self.setAutoRaise(True)
+        self.setFocusPolicy(QtCore.Qt.NoFocus)
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
@@ -296,8 +297,11 @@ class ShelfButton(QtWidgets.QToolButton):
     def mouseReleaseEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton and self._is_pressed:
             self._is_pressed = False
-            # Cancel if released outside button boundary
-            if self.rect().contains(event.pos()):
+            inside = self.rect().contains(event.pos())
+            super(ShelfButton, self).mouseReleaseEvent(event)
+            self.setDown(False)
+            self.update()
+            if inside:
                 self.shelf_manager.execute_command(self.command, self.source_type)
             else:
                 print(f"spShelf: Action '{self.overlay_label or 'Button'}' canceled (dragged off)")
@@ -306,6 +310,9 @@ class ShelfButton(QtWidgets.QToolButton):
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton and self.double_click_command:
+            super(ShelfButton, self).mouseDoubleClickEvent(event)
+            self.setDown(False)
+            self.update()
             self.shelf_manager.execute_command(self.double_click_command, self.source_type)
             return
         super(ShelfButton, self).mouseDoubleClickEvent(event)
@@ -570,6 +577,9 @@ class SpShelfWindow(QtWidgets.QWidget):
                 background-color: #1f1f1f;
                 border: 1px solid #333333;
                 padding: 1px 0px 0px 1px;
+            }}
+            ShelfButton:focus, QToolButton:focus {{
+                outline: none;
             }}
             QCheckBox {{
                 color: #cccccc;
