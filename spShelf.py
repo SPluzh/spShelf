@@ -1,4 +1,7 @@
-# spShelf v2.3.0 (Pure Qt / PySide rewrite)
+# spShelf v2.3.1 (Pure Qt / PySide rewrite)
+# v2.3.1 - Fixed separator parsing when importing shelves from MEL (parse_shelf_file):
+#          separator flags are no longer captured as button properties, preventing empty buttons.
+#          Added self-healing filter in load_user_data for orphaned/empty button entries.
 # v2.3.0 - Added interactive Button Editor dialog with real-time Live Preview,
 #          theme styling, color pickers, script editing, and RMB popup menu editor.
 # v2.2.4 - Added button width parsing from MEL shelves (-width, -w, -flexibleWidthType/Value)
@@ -3937,8 +3940,24 @@ class SpShelf:
 
                 # Auto-sanitize and heal any commands / menuItems that may be corrupted or wrapped
                 for shelf in self.shelves:
+                    clean_buttons = []
                     for btn in shelf.get("buttons", []):
-                        if not isinstance(btn, dict) or btn.get("type") == "separator":
+                        if not isinstance(btn, dict):
+                            continue
+                        if btn.get("type") == "separator":
+                            clean_buttons.append(btn)
+                            continue
+                        # Skip orphaned/corrupted empty buttons that have no button properties
+                        has_identity = any([
+                            btn.get("image"),
+                            btn.get("image1"),
+                            btn.get("command"),
+                            btn.get("label"),
+                            btn.get("imageOverlayLabel"),
+                            btn.get("annotation"),
+                            btn.get("menuItems"),
+                        ])
+                        if not has_identity:
                             continue
                         if "command" in btn and btn["command"]:
                             _, clean_c, c_type = sanitize_command(btn["command"], btn.get("label", ""))
@@ -3968,6 +3987,8 @@ class SpShelf:
                             btn["menuItems"] = filtered_mis
                         elif "menuItems" in btn:
                             del btn["menuItems"]
+                        clean_buttons.append(btn)
+                    shelf["buttons"] = clean_buttons
             except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
                 cmds.warning(f"Resetting corrupted JSON file: {self.user_data_file}")
                 self.save_user_data()
@@ -4302,6 +4323,18 @@ class SpShelf:
                 return None
             if item.get("type") == "separator":
                 return item
+            # Valid button must have at least an image, command, label, annotation, or menuItems
+            has_identity = any([
+                item.get("image"),
+                item.get("image1"),
+                item.get("command"),
+                item.get("label"),
+                item.get("imageOverlayLabel"),
+                item.get("annotation"),
+                item.get("menuItems"),
+            ])
+            if not has_identity:
+                return None
             enable_bg = item.pop("_enableBackground", None)
             parsed_bg = item.pop("_parsedBackgroundColor", None)
             if enable_bg is True and parsed_bg is not None:
@@ -4321,117 +4354,131 @@ class SpShelf:
             return item
 
         button_data = {}
+        current_command = None
         for line in lines:
             line = line.strip()
             if line.startswith("shelfButton"):
-                fin = _finalize_item(button_data)
-                if fin:
-                    buttons.append(fin)
+                if current_command == "shelfButton":
+                    fin = _finalize_item(button_data)
+                    if fin:
+                        buttons.append(fin)
                 button_data = {}
+                current_command = "shelfButton"
             elif line.startswith("separator"):
-                fin = _finalize_item(button_data)
-                if fin:
-                    buttons.append(fin)
+                if current_command == "shelfButton":
+                    fin = _finalize_item(button_data)
+                    if fin:
+                        buttons.append(fin)
                 buttons.append({"type": "separator"})
                 button_data = {}
-            elif line.startswith("-overlayLabelColor"):
-                try:
-                    tokens = line.rstrip(";").split()
-                    vals = [round(float(x), 4) for x in tokens[1:]]
-                    if len(vals) >= 3:
-                        button_data["overlayLabelColor"] = vals[:3]
-                        button_data["labelColor"] = vals[:3]
-                except Exception:
-                    pass
-            elif line.startswith("-overlayLabelBackColor"):
-                try:
-                    tokens = line.rstrip(";").split()
-                    vals = [round(float(x), 4) for x in tokens[1:]]
-                    if len(vals) >= 3:
-                        button_data["overlayLabelBackColor"] = vals
-                        button_data["labelBackground"] = vals[:3]
-                        if len(vals) >= 4:
-                            button_data["backgroundTransparency"] = vals[3]
-                except Exception:
-                    pass
-            elif line.startswith("-enableBackground"):
-                try:
-                    tokens = line.rstrip(";").split()
-                    button_data["_enableBackground"] = bool(int(tokens[1]))
-                except Exception:
-                    pass
-            elif line.startswith("-backgroundColor"):
-                try:
-                    tokens = line.rstrip(";").split()
-                    vals = [round(float(x), 4) for x in tokens[1:]]
-                    if len(vals) >= 3:
-                        button_data["_parsedBackgroundColor"] = vals[:3]
-                except Exception:
-                    pass
-            elif re.search(r'-m(?:io?|enuItem(?:WithOptionBox)?)\s+"', line):
-                # 1. First parse any -mio / -menuItemWithOptionBox matches
-                for m in re.finditer(r'-m(?:io|enuItemWithOptionBox)\s+"((?:\\.|[^"\\])*)"\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)', line):
-                    raw_label = m.group(1)
-                    raw_cmd = m.group(2)
-                    raw_opt = m.group(3)
-                    label = raw_label.replace(r'\"', '"').replace(r'\\', '\\')
-                    clean_cmd, cmd_type = extract_command_and_type(raw_cmd.replace(r'\"', '"').replace(r'\\', '\\'))
-                    if is_default_maya_menu_item(clean_cmd, label):
-                        continue
-                    clean_opt, opt_type = extract_command_and_type(raw_opt.replace(r'\"', '"').replace(r'\\', '\\'))
-                    button_data.setdefault("menuItems", []).append({
-                        "label": label,
-                        "command": clean_cmd,
-                        "sourceType": cmd_type,
-                        "optionBoxCommand": clean_opt,
-                        "optionBoxSourceType": opt_type
-                    })
-                # 2. Parse standard -mi / -menuItem matches
-                for m in re.finditer(r'-m(?:i|enuItem)\s+"((?:\\.|[^"\\])*)"\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)', line):
-                    raw_label = m.group(1)
-                    raw_cmd = m.group(2)
-                    label = raw_label.replace(r'\"', '"').replace(r'\\', '\\')
-                    unescaped_cmd = raw_cmd.replace(r'\"', '"').replace(r'\\', '\\')
-                    clean_cmd, cmd_type = extract_command_and_type(unescaped_cmd)
-                    if is_default_maya_menu_item(clean_cmd, label):
-                        continue
-                    button_data.setdefault("menuItems", []).append({
-                        "label": label,
-                        "command": clean_cmd,
-                        "sourceType": cmd_type
-                    })
-            elif (line.startswith("-width") or line.startswith("-w ")) and not line.startswith("-marginWidth"):
-                try:
-                    tokens = line.rstrip(";").split()
-                    if len(tokens) >= 2:
-                        w_val = int(float(tokens[1]))
-                        if w_val > 0:
-                            button_data["width"] = w_val
-                except Exception:
-                    pass
-            elif line.startswith("-flexibleWidthType"):
-                try:
-                    tokens = line.rstrip(";").split()
-                    if len(tokens) >= 2:
-                        button_data["flexibleWidthType"] = int(tokens[1])
-                except Exception:
-                    pass
-            elif line.startswith("-flexibleWidthValue"):
-                try:
-                    tokens = line.rstrip(";").split()
-                    if len(tokens) >= 2:
-                        button_data["flexibleWidthValue"] = int(tokens[1])
-                except Exception:
-                    pass
-            elif any(line.startswith(k) for k in ["-label", "-image", "-annotation", "-command", "-sourceType", "-doubleClickCommand", "-style"]):
-                parts = line.split("\"", 1)
-                if len(parts) > 1:
-                    key = line.split()[0][1:]
-                    button_data[key] = parts[1].rsplit("\"", 1)[0]
+                current_command = "separator"
+            elif line.startswith(";") or line == ";":
+                if current_command == "shelfButton":
+                    fin = _finalize_item(button_data)
+                    if fin:
+                        buttons.append(fin)
+                    button_data = {}
+                current_command = None
+            elif current_command == "shelfButton":
+                if line.startswith("-overlayLabelColor"):
+                    try:
+                        tokens = line.rstrip(";").split()
+                        vals = [round(float(x), 4) for x in tokens[1:]]
+                        if len(vals) >= 3:
+                            button_data["overlayLabelColor"] = vals[:3]
+                            button_data["labelColor"] = vals[:3]
+                    except Exception:
+                        pass
+                elif line.startswith("-overlayLabelBackColor"):
+                    try:
+                        tokens = line.rstrip(";").split()
+                        vals = [round(float(x), 4) for x in tokens[1:]]
+                        if len(vals) >= 3:
+                            button_data["overlayLabelBackColor"] = vals
+                            button_data["labelBackground"] = vals[:3]
+                            if len(vals) >= 4:
+                                button_data["backgroundTransparency"] = vals[3]
+                    except Exception:
+                        pass
+                elif line.startswith("-enableBackground"):
+                    try:
+                        tokens = line.rstrip(";").split()
+                        button_data["_enableBackground"] = bool(int(tokens[1]))
+                    except Exception:
+                        pass
+                elif line.startswith("-backgroundColor"):
+                    try:
+                        tokens = line.rstrip(";").split()
+                        vals = [round(float(x), 4) for x in tokens[1:]]
+                        if len(vals) >= 3:
+                            button_data["_parsedBackgroundColor"] = vals[:3]
+                    except Exception:
+                        pass
+                elif re.search(r'-m(?:io?|enuItem(?:WithOptionBox)?)\s+"', line):
+                    # 1. First parse any -mio / -menuItemWithOptionBox matches
+                    for m in re.finditer(r'-m(?:io|enuItemWithOptionBox)\s+"((?:\\.|[^"\\])*)"\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)', line):
+                        raw_label = m.group(1)
+                        raw_cmd = m.group(2)
+                        raw_opt = m.group(3)
+                        label = raw_label.replace(r'\"', '"').replace(r'\\', '\\')
+                        clean_cmd, cmd_type = extract_command_and_type(raw_cmd.replace(r'\"', '"').replace(r'\\', '\\'))
+                        if is_default_maya_menu_item(clean_cmd, label):
+                            continue
+                        clean_opt, opt_type = extract_command_and_type(raw_opt.replace(r'\"', '"').replace(r'\\', '\\'))
+                        button_data.setdefault("menuItems", []).append({
+                            "label": label,
+                            "command": clean_cmd,
+                            "sourceType": cmd_type,
+                            "optionBoxCommand": clean_opt,
+                            "optionBoxSourceType": opt_type
+                        })
+                    # 2. Parse standard -mi / -menuItem matches
+                    for m in re.finditer(r'-m(?:i|enuItem)\s+"((?:\\.|[^"\\])*)"\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)', line):
+                        raw_label = m.group(1)
+                        raw_cmd = m.group(2)
+                        label = raw_label.replace(r'\"', '"').replace(r'\\', '\\')
+                        unescaped_cmd = raw_cmd.replace(r'\"', '"').replace(r'\\', '\\')
+                        clean_cmd, cmd_type = extract_command_and_type(unescaped_cmd)
+                        if is_default_maya_menu_item(clean_cmd, label):
+                            continue
+                        button_data.setdefault("menuItems", []).append({
+                            "label": label,
+                            "command": clean_cmd,
+                            "sourceType": cmd_type
+                        })
+                elif (line.startswith("-width") or line.startswith("-w ")) and not line.startswith("-marginWidth"):
+                    try:
+                        tokens = line.rstrip(";").split()
+                        if len(tokens) >= 2:
+                            w_val = int(float(tokens[1]))
+                            if w_val > 0:
+                                button_data["width"] = w_val
+                    except Exception:
+                        pass
+                elif line.startswith("-flexibleWidthType"):
+                    try:
+                        tokens = line.rstrip(";").split()
+                        if len(tokens) >= 2:
+                            button_data["flexibleWidthType"] = int(tokens[1])
+                    except Exception:
+                        pass
+                elif line.startswith("-flexibleWidthValue"):
+                    try:
+                        tokens = line.rstrip(";").split()
+                        if len(tokens) >= 2:
+                            button_data["flexibleWidthValue"] = int(tokens[1])
+                    except Exception:
+                        pass
+                elif any(line.startswith(k) for k in ["-label", "-image", "-annotation", "-command", "-sourceType", "-doubleClickCommand", "-style"]):
+                    parts = line.split("\"", 1)
+                    if len(parts) > 1:
+                        key = line.split()[0][1:]
+                        button_data[key] = parts[1].rsplit("\"", 1)[0]
 
-        fin = _finalize_item(button_data)
-        if fin:
-            buttons.append(fin)
+        if current_command == "shelfButton":
+            fin = _finalize_item(button_data)
+            if fin:
+                buttons.append(fin)
 
         return buttons
 

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1]
+- **Fixed Separator Parsing When Adding Shelves from MEL**:
+    - Fixed an issue in [`parse_shelf_file`](file:///c:/Users/user/Desktop/python/spShelf/spShelf.py) where flags belonging to a `separator` command (such as `-width 12` and `-style "shelf"`) were mistakenly parsed as attributes of a subsequent `shelfButton`, creating phantom empty buttons after each separator.
+    - Added state tracking (`current_command`) and identity validation in [`_finalize_item`](file:///c:/Users/user/Desktop/python/spShelf/spShelf.py) to guarantee that non-button commands do not pollute shelf buttons.
+    - Added auto-sanitizing filter in [`load_user_data`](file:///c:/Users/user/Desktop/python/spShelf/spShelf.py) to automatically strip orphaned/empty corrupted buttons from `sp_shelf_data.json`.
+
 ## [2.3.0]
 - **Interactive Button Editor Dialog with Live Preview**:
     - Added **«Edit Button...»** action with native icon to shelf button right-click context menu.
