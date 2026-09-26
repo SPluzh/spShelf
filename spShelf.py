@@ -1,12 +1,13 @@
-# spShelf v2.5.0 (Pure Qt / PySide rewrite)
-# v2.5.0 - Added native Maya shelf drag-and-drop support:
+# spShelf v2.1.6 (Pure Qt / PySide rewrite)
+# v2.1.6 - Added "Add Separator" option to shelf, button, and separator context menus.
+# v2.1.5 - Added native Maya shelf drag-and-drop support:
 #          MMB drag buttons from Maya standard shelves and Script Editor into spShelf.
-# v2.4.0 - Added Middle Mouse Button (MMB) drag-and-drop support:
+# v2.1.4 - Added Middle Mouse Button (MMB) drag-and-drop support:
 #          reorder buttons within a shelf and move buttons between shelves
 #          with animated high-contrast insertion indicators and collapsed shelf drop/expand.
-# v2.3.0 - Added floating island shelf toggle button (mel: ToggleShelf;) to the left of settings
+# v2.1.3 - Added floating island shelf toggle button (mel: ToggleShelf;) to the left of settings
 #          with real-time Maya shelf visibility sync and High-DPI miniature shelf icon.
-# v2.2.0 - Added compact top-right island settings button with toggleable rollout panel
+# v2.1.2 - Added compact top-right island settings button with toggleable rollout panel
 #          and integrated multi-resolution High-DPI gear icons.
 # v2.1.0 - Added DPI & System Scaling support: automatic detection from Maya/Qt/OS
 #          and manual scale override in Settings (75% - 300% / Custom).
@@ -464,6 +465,11 @@ class ShelfButton(QtWidgets.QToolButton):
         if menu_items:
             menu.addSeparator()
 
+        add_sep_action = menu.addAction("Add Separator")
+        add_sep_action.triggered.connect(lambda: self.shelf_manager.add_separator(self.shelf_index, self.button_index + 1))
+
+        menu.addSeparator()
+
         del_action = menu.addAction("Delete Button")
         del_action.triggered.connect(lambda: self.shelf_manager.confirm_and_delete_button(self.shelf_index, self.button_index))
 
@@ -589,6 +595,9 @@ class SeparatorWidget(QtWidgets.QFrame):
         if not self.shelf_manager:
             return
         menu = QtWidgets.QMenu(self)
+        add_sep_action = menu.addAction("Add Separator")
+        add_sep_action.triggered.connect(lambda: self.shelf_manager.add_separator(self.shelf_index, self.item_index + 1))
+        menu.addSeparator()
         del_action = menu.addAction("Delete Separator")
         del_action.triggered.connect(lambda: self.shelf_manager.confirm_and_delete_button(self.shelf_index, self.item_index))
         menu.exec_(self.mapToGlobal(pos))
@@ -1683,7 +1692,12 @@ class SpShelfWindow(QtWidgets.QWidget):
             )
             self.shelf_sections.append(section)
 
-            # Header context menu
+            # Shelf and Header context menu
+            section.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            section.customContextMenuRequested.connect(
+                lambda pos, idx=shelf_idx, sec=section: self._show_shelf_header_menu(pos, idx, sec, sec)
+            )
+
             section.header_btn.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
             section.header_btn.customContextMenuRequested.connect(
                 lambda pos, idx=shelf_idx, sec=section: self._show_shelf_header_menu(pos, idx, sec, sec.header_btn)
@@ -1827,6 +1841,19 @@ class SpShelfWindow(QtWidgets.QWidget):
     def _show_shelf_header_menu(self, pos, shelf_index, section, parent_widget=None):
         target = parent_widget or section.header_btn
         menu = QtWidgets.QMenu(target)
+
+        target_idx = None
+        if isinstance(target, ShelfGridWidget):
+            try:
+                target_idx, _, _ = target._calculate_target_slot(pos)
+            except Exception:
+                target_idx = None
+
+        add_sep_action = menu.addAction("Add Separator")
+        add_sep_action.triggered.connect(lambda: self.manager.add_separator(shelf_index, target_idx))
+
+        menu.addSeparator()
+
         vis = self.manager.shelves[shelf_index].get("label_visible", True)
         label_action = menu.addAction("Hide Label" if vis else "Show Label")
         label_action.triggered.connect(lambda: self.manager.toggle_single_shelf_label(shelf_index, not vis))
@@ -2283,6 +2310,31 @@ class SpShelf:
                 self.save_user_data()
                 if self.window_widget:
                     self.window_widget.rebuild_content()
+
+    def add_separator(self, shelf_idx, target_idx=None):
+        """
+        Adds a separator to the specified shelf.
+        If target_idx is provided, inserts at target_idx; otherwise appends to the end of the shelf.
+        Ensures SHOW_SEPARATORS is enabled and uncollapses the shelf if collapsed.
+        """
+        if not (0 <= shelf_idx < len(self.shelves)):
+            return
+        shelf = self.shelves[shelf_idx]
+        buttons = shelf.setdefault("buttons", [])
+        if target_idx is None or target_idx < 0 or target_idx > len(buttons):
+            target_idx = len(buttons)
+
+        buttons.insert(target_idx, {"type": "separator"})
+
+        if not self.settings.get("SHOW_SEPARATORS", True):
+            self.settings["SHOW_SEPARATORS"] = True
+
+        if shelf.get("collapsed", False):
+            shelf["collapsed"] = False
+
+        self.save_user_data()
+        if self.window_widget:
+            self.window_widget.rebuild_content()
 
     def move_shelf_item(self, source_shelf_idx, source_item_idx, target_shelf_idx, target_item_idx):
         """

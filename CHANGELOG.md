@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.5.0]
+## [2.1.6]
+- **UX/Context Menu**: Added "Add Separator" action to shelf context menus:
+    - **Shelf Header & Background**: Right-clicking shelf headers or empty shelf grid space provides an "Add Separator" option to append or insert separators at the cursor target position.
+    - **Shelf Buttons & Separators**: Right-clicking shelf buttons or existing separators provides an "Add Separator" action to insert a new separator immediately after the selected item.
+    - **Auto-Visibility & Expand**: Automatically activates "Show Separators" if disabled so new separators are immediately visible, and uncollapses the target shelf if collapsed.
+
+## [2.1.5]
 - **UX/Interactivity**: Implemented drag-and-drop support from Autodesk Maya's native shelves into `spShelf`:
     - **Native Shelf Drag Acceptance**: Dragging buttons with Middle Mouse Button (**MMB**) from any standard Maya shelf (Modeling, Curves, Animation, Custom, etc.) into `spShelf` seamlessly copies them into the target shelf.
     - **Full Attribute Extraction**: Automatically inspects and preserves all button properties: execution command, `sourceType` (MEL/Python), icon path/resource, overlay label, annotation tooltip, and double-click commands.
@@ -10,7 +16,7 @@ All notable changes to this project will be documented in this file.
     - **Script Editor Drag-to-Shelf**: Dragging selected Python or MEL code from Maya's Script Editor directly into `spShelf` automatically creates a new shelf button with auto-detected interpreter type.
     - **Safe Copy Mode**: Leaves original Maya shelf buttons untouched to prevent accidental modification of default Maya shelves.
 
-## [2.4.0]
+## [2.1.4]
 - **UX/Interactivity**: Implemented native Maya-style Middle Mouse Button (**MMB**) drag-and-drop reordering:
     - **Intra-shelf reordering**: Dragging buttons or separators within the same shelf dynamically rearranges their positions.
     - **Inter-shelf transfer**: Dragging items across different shelves transfers them seamlessly to the target shelf.
@@ -20,14 +26,14 @@ All notable changes to this project will be documented in this file.
     - **Data Persistence**: Immediate JSON persistence via `move_shelf_item()` and non-jumping scroll preservation across rebuilds.
     - **Version Compatibility**: Full cross-version compatibility supporting PySide2 (Maya 2020–2024) and PySide6 (Maya 2025+).
 
-## [2.3.0]
+## [2.1.3]
 - **UI/UX**: Added a floating island button to toggle Maya's native shelves (`mel: ToggleShelf;`) positioned immediately to the left of the settings button:
     - Sized and styled identically to the settings island button (compact ~20px with DPI scaling, rounded geometry, smooth hover/pressed states).
     - Real-time synchronization with Maya's shelf visibility via `isUIComponentVisible("Shelf")`: displays Maya teal accent when shelves are visible, and dark gray when shelves are hidden.
     - Integrated multi-resolution shelf icon resolution (`shelfTab.png`, `shelf.png`, etc.) with a clean procedural high-DPI miniature shelf fallback.
     - Dynamic tooltip indicating current shelf state (`Toggle Maya Shelf: Visible/Hidden (mel: ToggleShelf;)`).
 
-## [2.2.0]
+## [2.1.2]
 - **UI/UX**: Implemented the settings button as a true floating island overlay (HUD badge) positioned directly above the top shelf buttons:
     - Zero window height overhead: removed the separate window header bar, making the window as compact and clean as possible.
     - Sized to half of regular shelf buttons (~20px with DPI scaling) with rounded island geometry and smooth hover/pressed highlights.
