@@ -1,4 +1,6 @@
-# spShelf v2.2.4 (Pure Qt / PySide rewrite)
+# spShelf v2.3.0 (Pure Qt / PySide rewrite)
+# v2.3.0 - Added interactive Button Editor dialog with real-time Live Preview,
+#          theme styling, color pickers, script editing, and RMB popup menu editor.
 # v2.2.4 - Added button width parsing from MEL shelves (-width, -w, -flexibleWidthType/Value)
 #          and drag-and-drop extraction, supporting custom-width shelf buttons.
 # v2.2.3 - Fixed multi-row shelf separator sizing: separators now always maintain compact width
@@ -411,7 +413,7 @@ class ShelfButton(QtWidgets.QToolButton):
     - Supports right-click context menu (sub-commands and deletion).
     - Supports double-click commands.
     """
-    def __init__(self, button_data, shelf_index, button_index, shelf_manager, scale=1.0, parent=None):
+    def __init__(self, button_data, shelf_index, button_index, shelf_manager, scale=1.0, is_preview=False, parent=None):
         super(ShelfButton, self).__init__(parent)
         self.button_data = button_data
         self.shelf_index = shelf_index
@@ -419,16 +421,30 @@ class ShelfButton(QtWidgets.QToolButton):
         self.item_index = button_index
         self.shelf_manager = shelf_manager
         self.scale = scale
+        self.is_preview = is_preview
         self._is_pressed = False
         self._mmb_pressed = False
         self._mmb_drag_start_pos = QtCore.QPoint()
 
+        self.setAutoRaise(True)
+        self.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+
+        self.update_data(button_data)
+
+    def update_data(self, button_data):
+        """
+        Updates button properties (labels, width, colors, icon, commands)
+        from a data dictionary and triggers a repaint.
+        """
+        self.button_data = button_data
         self.overlay_label = button_data.get("imageOverlayLabel", "")
         self.command = button_data.get("command", "")
         self.source_type = button_data.get("sourceType", "mel")
         self.double_click_command = button_data.get("doubleClickCommand", "")
         annotation = button_data.get("annotation", "") or button_data.get("label", "")
-        
+
         self.setToolTip(annotation)
         btn_sz = max(24, int(round(38 * self.scale)))
         btn_w = btn_sz
@@ -446,10 +462,6 @@ class ShelfButton(QtWidgets.QToolButton):
             except (ValueError, TypeError):
                 pass
         self.setFixedSize(btn_w, btn_sz)
-        self.setAutoRaise(True)
-        self.setFocusPolicy(QtCore.Qt.NoFocus)
-        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._show_context_menu)
 
         # Colors from button data
         self.label_color = (
@@ -476,14 +488,19 @@ class ShelfButton(QtWidgets.QToolButton):
             if olb and len(olb) >= 4:
                 self.background_transparency = olb[3]
 
-        self.button_background = (
-            button_data.get("buttonBackground")
-            or button_data.get("button_background")
-            or button_data.get("backgroundColor")
-        )
+        enable_bg = button_data.get("enableBackground")
+        if enable_bg is False:
+            self.button_background = None
+        else:
+            self.button_background = (
+                button_data.get("buttonBackground")
+                or button_data.get("button_background")
+                or button_data.get("backgroundColor")
+            )
 
         icon_name = button_data.get("image", "commandButton.png")
         self._pixmap = get_maya_pixmap(icon_name)
+        self.update()
 
     @property
     def has_custom_menu(self):
@@ -499,6 +516,18 @@ class ShelfButton(QtWidgets.QToolButton):
             if not is_default_maya_menu_item(cmd, lbl) and (cmd or lbl):
                 return True
         return False
+
+    def get_corner_radius(self):
+        """Returns the configured corner radius for shelf buttons from settings (default: 1px)."""
+        if self.shelf_manager and hasattr(self.shelf_manager, "settings"):
+            val = self.shelf_manager.settings.get("BUTTON_RADIUS")
+            if val is None:
+                val = self.shelf_manager.settings.get("BUTTON_CORNER_RADIUS", 1)
+            try:
+                return max(0, int(val))
+            except (ValueError, TypeError):
+                return 1
+        return 1
 
     def paintEvent(self, event):
         super(ShelfButton, self).paintEvent(event)
@@ -519,14 +548,17 @@ class ShelfButton(QtWidgets.QToolButton):
             elif self.underMouse():
                 bg_color = bg_color.lighter(120)
 
-            radius = max(2, int(round(3 * self.scale)))
             bg_rect = self.rect().adjusted(1, 1, -1, -1)
             if self.isDown():
                 bg_rect.adjust(1, 1, 1, 1)
 
+            btn_r = int(round(self.get_corner_radius() * self.scale))
             painter.setPen(QtCore.Qt.NoPen)
             painter.setBrush(QtGui.QBrush(bg_color))
-            painter.drawRoundedRect(bg_rect, radius, radius)
+            if btn_r > 0:
+                painter.drawRoundedRect(bg_rect, btn_r, btn_r)
+            else:
+                painter.drawRect(bg_rect)
 
         # 2. Draw icon scaled to the full button with DPI and smooth filtering
         if self._pixmap and not self._pixmap.isNull():
@@ -604,10 +636,9 @@ class ShelfButton(QtWidgets.QToolButton):
                     lg = max(0, min(255, int(self.label_background[1] * 255)))
                     lb = max(0, min(255, int(self.label_background[2] * 255)))
                     la = max(0, min(255, int(bg_alpha * 255)))
-                    box_radius = max(1, int(round(2 * self.scale)))
                     painter.setPen(QtCore.Qt.NoPen)
                     painter.setBrush(QtGui.QBrush(QtGui.QColor(lr, lg, lb, la)))
-                    painter.drawRoundedRect(label_box, box_radius, box_radius)
+                    painter.drawRect(label_box)
                     if bg_alpha > 0.6:
                         has_solid_bg = True
 
@@ -672,6 +703,9 @@ class ShelfButton(QtWidgets.QToolButton):
         super(ShelfButton, self).mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if getattr(self, "is_preview", False):
+            super(ShelfButton, self).mouseMoveEvent(event)
+            return
         if getattr(self, "_mmb_pressed", False) and (event.buttons() & QtCore.Qt.MiddleButton):
             pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
             dist = (pos - self._mmb_drag_start_pos).manhattanLength()
@@ -692,13 +726,18 @@ class ShelfButton(QtWidgets.QToolButton):
             self.setDown(False)
             self.update()
             if inside:
-                self.shelf_manager.execute_command(self.command, self.source_type)
+                if getattr(self, "is_preview", False):
+                    log_debug(f"Preview button clicked: {self.overlay_label or 'Button'}")
+                elif self.shelf_manager:
+                    self.shelf_manager.execute_command(self.command, self.source_type)
             else:
                 print(f"spShelf: Action '{self.overlay_label or 'Button'}' canceled (dragged off)")
             return
         super(ShelfButton, self).mouseReleaseEvent(event)
 
     def _start_drag(self, pos):
+        if getattr(self, "is_preview", False):
+            return
         drag = QtGui.QDrag(self)
         mime_data = QtCore.QMimeData()
         payload = {
@@ -730,7 +769,8 @@ class ShelfButton(QtWidgets.QToolButton):
             super(ShelfButton, self).mouseDoubleClickEvent(event)
             self.setDown(False)
             self.update()
-            self.shelf_manager.execute_command(self.double_click_command, self.source_type)
+            if not getattr(self, "is_preview", False) and self.shelf_manager:
+                self.shelf_manager.execute_command(self.double_click_command, self.source_type)
             return
         super(ShelfButton, self).mouseDoubleClickEvent(event)
 
@@ -747,7 +787,10 @@ class ShelfButton(QtWidgets.QToolButton):
                 _, detected_type = extract_command_and_type(cmd)
                 item_source_type = detected_type if detected_type == "python" else self.source_type
             action = menu.addAction(label)
-            action.triggered.connect(lambda checked=False, c=cmd, t=item_source_type: self.shelf_manager.execute_command(c, t))
+            if getattr(self, "is_preview", False):
+                action.triggered.connect(lambda checked=False, l=label: log_debug(f"[Preview] Triggered popup item: {l}"))
+            elif self.shelf_manager:
+                action.triggered.connect(lambda checked=False, c=cmd, t=item_source_type: self.shelf_manager.execute_command(c, t))
 
             opt_cmd = item.get("optionBoxCommand", "")
             if opt_cmd:
@@ -761,20 +804,1188 @@ class ShelfButton(QtWidgets.QToolButton):
             opt_menu = menu.addMenu(get_maya_icon("menuIconOptions.png"), "Options")
             for o_lbl, o_cmd, o_type in opt_actions:
                 o_action = opt_menu.addAction(get_maya_icon("menuIconOptions.png"), f"{o_lbl} Options")
-                o_action.triggered.connect(lambda checked=False, c=o_cmd, t=o_type: self.shelf_manager.execute_command(c, t))
+                if getattr(self, "is_preview", False):
+                    o_action.triggered.connect(lambda checked=False, l=o_lbl: log_debug(f"[Preview] Triggered option box: {l}"))
+                elif self.shelf_manager:
+                    o_action.triggered.connect(lambda checked=False, c=o_cmd, t=o_type: self.shelf_manager.execute_command(c, t))
 
-        if menu_items:
+        if not getattr(self, "is_preview", False):
+            if menu_items:
+                menu.addSeparator()
+
+            edit_action = menu.addAction(get_maya_icon("edit.png"), "Edit Button...")
+            if self.shelf_manager:
+                edit_action.triggered.connect(lambda: self.shelf_manager.open_button_editor(self.shelf_index, self.button_index))
+
+            add_sep_action = menu.addAction("Add Separator")
+            if self.shelf_manager:
+                add_sep_action.triggered.connect(lambda: self.shelf_manager.add_separator(self.shelf_index, self.button_index + 1))
+
             menu.addSeparator()
 
-        add_sep_action = menu.addAction("Add Separator")
-        add_sep_action.triggered.connect(lambda: self.shelf_manager.add_separator(self.shelf_index, self.button_index + 1))
-
-        menu.addSeparator()
-
-        del_action = menu.addAction("Delete Button")
-        del_action.triggered.connect(lambda: self.shelf_manager.confirm_and_delete_button(self.shelf_index, self.button_index))
+            del_action = menu.addAction("Delete Button")
+            if self.shelf_manager:
+                del_action.triggered.connect(lambda: self.shelf_manager.confirm_and_delete_button(self.shelf_index, self.button_index))
 
         menu.exec_(self.mapToGlobal(pos))
+
+
+# ----------------------------------------------------------------------
+# Button Editor Components
+# ----------------------------------------------------------------------
+class ColorPickerButton(QtWidgets.QPushButton):
+    """
+    Compact button displaying a color swatch preview and hex/RGB label.
+    Opens QColorDialog on click.
+    Supports normalized RGB [r, g, b] (0.0 to 1.0) or None (transparent/default).
+    """
+    colorChanged = QtCore.Signal(object)  # Emits list [r, g, b] or None
+
+    def __init__(self, initial_color=None, default_color=None, allow_reset=True, scale=1.0, parent=None):
+        super(ColorPickerButton, self).__init__(parent)
+        self.scale = scale
+        self.allow_reset = allow_reset
+        self.default_color = default_color
+        self._normalized_rgb = None
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+        self.clicked.connect(self._pick_color)
+        self.set_normalized_rgb(initial_color, emit=False)
+
+    def _show_context_menu(self, pos):
+        if not self.allow_reset:
+            return
+        menu = QtWidgets.QMenu(self)
+        reset_action = menu.addAction("Reset / Clear Color")
+        reset_action.triggered.connect(lambda: self.set_normalized_rgb(self.default_color, emit=True))
+        menu.exec_(self.mapToGlobal(pos))
+
+    def _pick_color(self):
+        initial = QtGui.QColor(255, 255, 255)
+        if self._normalized_rgb and len(self._normalized_rgb) >= 3:
+            r = int(round(self._normalized_rgb[0] * 255))
+            g = int(round(self._normalized_rgb[1] * 255))
+            b = int(round(self._normalized_rgb[2] * 255))
+            initial = QtGui.QColor(r, g, b)
+
+        dialog = QtWidgets.QColorDialog(initial, self)
+        dialog.setWindowTitle("Select Color")
+        exec_func = getattr(dialog, "exec", getattr(dialog, "exec_", None))
+        if exec_func and exec_func() == QtWidgets.QDialog.Accepted:
+            picked = dialog.selectedColor()
+            if picked.isValid():
+                norm_rgb = [
+                    round(picked.redF(), 4),
+                    round(picked.greenF(), 4),
+                    round(picked.blueF(), 4)
+                ]
+                self.set_normalized_rgb(norm_rgb, emit=True)
+
+    def get_normalized_rgb(self):
+        return self._normalized_rgb
+
+    def set_normalized_rgb(self, rgb_list, emit=True):
+        if rgb_list and len(rgb_list) >= 3:
+            try:
+                self._normalized_rgb = [
+                    round(max(0.0, min(1.0, float(rgb_list[0]))), 4),
+                    round(max(0.0, min(1.0, float(rgb_list[1]))), 4),
+                    round(max(0.0, min(1.0, float(rgb_list[2]))), 4)
+                ]
+            except (ValueError, TypeError):
+                self._normalized_rgb = None
+        else:
+            self._normalized_rgb = None
+
+        self._update_appearance()
+        if emit:
+            self.colorChanged.emit(self._normalized_rgb)
+
+    def _update_appearance(self):
+        sz = max(14, int(round(16 * self.scale)))
+        pix = QtGui.QPixmap(sz, sz)
+
+        if self._normalized_rgb:
+            r = int(round(self._normalized_rgb[0] * 255))
+            g = int(round(self._normalized_rgb[1] * 255))
+            b = int(round(self._normalized_rgb[2] * 255))
+            pix.fill(QtGui.QColor(r, g, b))
+            painter = QtGui.QPainter(pix)
+            painter.setPen(QtGui.QPen(QtGui.QColor(90, 90, 90), 1))
+            painter.drawRect(0, 0, sz - 1, sz - 1)
+            painter.end()
+            self.setIcon(QtGui.QIcon(pix))
+            self.setIconSize(QtCore.QSize(sz, sz))
+            self.setText(f" #{r:02X}{g:02X}{b:02X}")
+        else:
+            pix.fill(QtGui.QColor(55, 55, 55))
+            painter = QtGui.QPainter(pix)
+            painter.setPen(QtGui.QPen(QtGui.QColor(160, 60, 60), 2))
+            painter.drawLine(2, 2, sz - 3, sz - 3)
+            painter.drawLine(2, sz - 3, sz - 3, 2)
+            painter.end()
+            self.setIcon(QtGui.QIcon(pix))
+            self.setIconSize(QtCore.QSize(sz, sz))
+            self.setText(" None / Default")
+
+
+class CodeEditorWidget(QtWidgets.QPlainTextEdit):
+    """
+    Monospace script editor with 4-space tab indentation.
+    """
+    def __init__(self, scale=1.0, parent=None):
+        super(CodeEditorWidget, self).__init__(parent)
+        self.scale = scale
+        font = QtGui.QFont("Consolas")
+        font.setStyleHint(QtGui.QFont.Monospace)
+        font.setPointSize(max(9, int(round(10 * self.scale))))
+        self.setFont(font)
+
+        metrics = QtGui.QFontMetricsF(font)
+        space_w = metrics.horizontalAdvance(" ") if hasattr(metrics, "horizontalAdvance") else metrics.width(" ")
+        tab_dist = max(16, int(round(space_w * 4)))
+        if hasattr(self, "setTabStopDistance"):
+            self.setTabStopDistance(tab_dist)
+        else:
+            self.setTabStopWidth(tab_dist)
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Tab and not (event.modifiers() & QtCore.Qt.ControlModifier):
+            self.insertPlainText("    ")
+            return
+        super(CodeEditorWidget, self).keyPressEvent(event)
+
+
+class PopupMenuEditorTab(QtWidgets.QWidget):
+    """
+    Editor tab for RMB popup menu items with Add, Delete, Up, Down,
+    label, command, sourceType, optionBoxCommand, and optionBoxSourceType.
+    """
+    itemsChanged = QtCore.Signal()
+
+    def __init__(self, initial_items=None, scale=1.0, parent=None):
+        super(PopupMenuEditorTab, self).__init__(parent)
+        self.scale = scale
+        self.items_data = []
+        if initial_items and isinstance(initial_items, list):
+            self.items_data = [dict(item) for item in initial_items if isinstance(item, dict)]
+
+        self._current_row = -1
+        self._loading = False
+        self._setup_ui()
+        self._refresh_list(select_row=0 if self.items_data else -1)
+
+    def _setup_ui(self):
+        root_layout = QtWidgets.QHBoxLayout(self)
+        root_pad = max(6, int(round(8 * self.scale)))
+        root_layout.setContentsMargins(root_pad, root_pad, root_pad, root_pad)
+        root_layout.setSpacing(root_pad)
+
+        # Left panel: list and controls
+        left_container = QtWidgets.QWidget(self)
+        left_layout = QtWidgets.QVBoxLayout(left_container)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(max(4, int(round(6 * self.scale))))
+
+        list_lbl = QtWidgets.QLabel("Menu Items (RMB):", left_container)
+        list_lbl.setStyleSheet("font-weight: bold;")
+        left_layout.addWidget(list_lbl)
+
+        self.list_widget = QtWidgets.QListWidget(left_container)
+        self.list_widget.currentRowChanged.connect(self._on_row_changed)
+        left_layout.addWidget(self.list_widget)
+
+        btn_grid = QtWidgets.QGridLayout()
+        btn_grid.setSpacing(max(3, int(round(4 * self.scale))))
+
+        self.add_btn = QtWidgets.QPushButton("+ Add Item", left_container)
+        self.add_btn.clicked.connect(self._on_add_item)
+        self.del_btn = QtWidgets.QPushButton("- Delete", left_container)
+        self.del_btn.clicked.connect(self._on_delete_item)
+        self.up_btn = QtWidgets.QPushButton("▲ Up", left_container)
+        self.up_btn.clicked.connect(self._on_move_up)
+        self.down_btn = QtWidgets.QPushButton("▼ Down", left_container)
+        self.down_btn.clicked.connect(self._on_move_down)
+
+        btn_grid.addWidget(self.add_btn, 0, 0)
+        btn_grid.addWidget(self.del_btn, 0, 1)
+        btn_grid.addWidget(self.up_btn, 1, 0)
+        btn_grid.addWidget(self.down_btn, 1, 1)
+        left_layout.addLayout(btn_grid)
+
+        root_layout.addWidget(left_container, 1)
+
+        # Right panel: detail editor
+        self.detail_group = QtWidgets.QGroupBox("Selected Item Properties", self)
+        detail_layout = QtWidgets.QVBoxLayout(self.detail_group)
+        detail_pad = max(6, int(round(8 * self.scale)))
+        detail_layout.setContentsMargins(detail_pad, detail_pad, detail_pad, detail_pad)
+        detail_layout.setSpacing(max(6, int(round(8 * self.scale))))
+
+        # Item Label & Language form
+        form_layout = QtWidgets.QFormLayout()
+        form_layout.setSpacing(max(4, int(round(6 * self.scale))))
+
+        self.item_label_edit = QtWidgets.QLineEdit(self.detail_group)
+        self.item_label_edit.setPlaceholderText("Menu item label")
+        self.item_label_edit.textChanged.connect(self._on_field_changed)
+        form_layout.addRow("Label:", self.item_label_edit)
+
+        self.item_lang_combo = QtWidgets.QComboBox(self.detail_group)
+        self.item_lang_combo.addItems(["python", "mel"])
+        self.item_lang_combo.currentIndexChanged.connect(self._on_field_changed)
+        form_layout.addRow("Language:", self.item_lang_combo)
+
+        detail_layout.addLayout(form_layout)
+
+        # Command code editor
+        cmd_lbl = QtWidgets.QLabel("Command (Script):", self.detail_group)
+        detail_layout.addWidget(cmd_lbl)
+
+        self.item_cmd_edit = CodeEditorWidget(scale=self.scale, parent=self.detail_group)
+        self.item_cmd_edit.textChanged.connect(self._on_field_changed)
+        self.item_cmd_edit.setMinimumHeight(max(70, int(round(90 * self.scale))))
+        detail_layout.addWidget(self.item_cmd_edit, 1)
+
+        # Option Box Group
+        self.opt_box_group = QtWidgets.QGroupBox("Option Box (Settings Window)", self.detail_group)
+        opt_layout = QtWidgets.QVBoxLayout(self.opt_box_group)
+        opt_layout.setContentsMargins(detail_pad, detail_pad, detail_pad, detail_pad)
+        opt_layout.setSpacing(max(4, int(round(6 * self.scale))))
+
+        self.opt_enable_chk = QtWidgets.QCheckBox("Enable Option Box Command (-mio)", self.opt_box_group)
+        self.opt_enable_chk.toggled.connect(self._on_opt_enable_toggled)
+        opt_layout.addWidget(self.opt_enable_chk)
+
+        opt_form = QtWidgets.QFormLayout()
+        self.opt_lang_combo = QtWidgets.QComboBox(self.opt_box_group)
+        self.opt_lang_combo.addItems(["python", "mel"])
+        self.opt_lang_combo.currentIndexChanged.connect(self._on_field_changed)
+        opt_form.addRow("Opt Lang:", self.opt_lang_combo)
+        opt_layout.addLayout(opt_form)
+
+        self.opt_cmd_edit = CodeEditorWidget(scale=self.scale, parent=self.opt_box_group)
+        self.opt_cmd_edit.textChanged.connect(self._on_field_changed)
+        self.opt_cmd_edit.setMinimumHeight(max(50, int(round(70 * self.scale))))
+        opt_layout.addWidget(self.opt_cmd_edit, 1)
+
+        detail_layout.addWidget(self.opt_box_group, 1)
+
+        root_layout.addWidget(self.detail_group, 2)
+
+    def _on_opt_enable_toggled(self, checked):
+        self.opt_lang_combo.setEnabled(checked)
+        self.opt_cmd_edit.setEnabled(checked)
+        self._on_field_changed()
+
+    def _on_field_changed(self):
+        if self._loading or not (0 <= self._current_row < len(self.items_data)):
+            return
+        item = self.items_data[self._current_row]
+        item["label"] = self.item_label_edit.text().strip()
+        item["sourceType"] = self.item_lang_combo.currentText()
+        item["command"] = self.item_cmd_edit.toPlainText()
+
+        if self.opt_enable_chk.isChecked():
+            item["optionBoxCommand"] = self.opt_cmd_edit.toPlainText()
+            item["optionBoxSourceType"] = self.opt_lang_combo.currentText()
+        else:
+            item.pop("optionBoxCommand", None)
+            item.pop("optionBoxSourceType", None)
+
+        # Update current list row label
+        list_item = self.list_widget.item(self._current_row)
+        if list_item:
+            lbl = item.get("label") or "Unnamed"
+            st = item.get("sourceType", "python").upper()
+            opt_tag = "  [Opt]" if item.get("optionBoxCommand") else ""
+            list_item.setText(f"{lbl}  [{st}]{opt_tag}")
+
+        self.itemsChanged.emit()
+
+    def _on_row_changed(self, row):
+        if 0 <= row < len(self.items_data):
+            self._current_row = row
+            self._loading = True
+            item = self.items_data[row]
+            self.item_label_edit.setText(item.get("label", ""))
+            st = item.get("sourceType", "python").lower()
+            self.item_lang_combo.setCurrentText("mel" if st == "mel" else "python")
+            self.item_cmd_edit.setPlainText(item.get("command", ""))
+
+            opt_cmd = item.get("optionBoxCommand", "")
+            has_opt = bool(opt_cmd)
+            self.opt_enable_chk.setChecked(has_opt)
+            self.opt_lang_combo.setEnabled(has_opt)
+            self.opt_cmd_edit.setEnabled(has_opt)
+            opt_st = item.get("optionBoxSourceType", "python").lower()
+            self.opt_lang_combo.setCurrentText("mel" if opt_st == "mel" else "python")
+            self.opt_cmd_edit.setPlainText(opt_cmd)
+
+            self.detail_group.setEnabled(True)
+            self._loading = False
+        else:
+            self._current_row = -1
+            self._loading = True
+            self.item_label_edit.clear()
+            self.item_cmd_edit.clear()
+            self.opt_cmd_edit.clear()
+            self.opt_enable_chk.setChecked(False)
+            self.opt_lang_combo.setEnabled(False)
+            self.opt_cmd_edit.setEnabled(False)
+            self.detail_group.setEnabled(False)
+            self._loading = False
+
+    def _on_add_item(self):
+        new_item = {
+            "label": f"Menu Item {len(self.items_data) + 1}",
+            "command": "",
+            "sourceType": "python"
+        }
+        self.items_data.append(new_item)
+        self._refresh_list(select_row=len(self.items_data) - 1)
+        self.itemsChanged.emit()
+
+    def _on_delete_item(self):
+        if 0 <= self._current_row < len(self.items_data):
+            del self.items_data[self._current_row]
+            next_row = max(0, min(self._current_row, len(self.items_data) - 1)) if self.items_data else -1
+            self._refresh_list(select_row=next_row)
+            self.itemsChanged.emit()
+
+    def _on_move_up(self):
+        if self._current_row > 0:
+            r = self._current_row
+            self.items_data[r], self.items_data[r - 1] = self.items_data[r - 1], self.items_data[r]
+            self._refresh_list(select_row=r - 1)
+            self.itemsChanged.emit()
+
+    def _on_move_down(self):
+        if 0 <= self._current_row < len(self.items_data) - 1:
+            r = self._current_row
+            self.items_data[r], self.items_data[r + 1] = self.items_data[r + 1], self.items_data[r]
+            self._refresh_list(select_row=r + 1)
+            self.itemsChanged.emit()
+
+    def _refresh_list(self, select_row=-1):
+        self._loading = True
+        self.list_widget.clear()
+        for item in self.items_data:
+            lbl = item.get("label") or "Unnamed"
+            st = item.get("sourceType", "python").upper()
+            opt_tag = "  [Opt]" if item.get("optionBoxCommand") else ""
+            self.list_widget.addItem(f"{lbl}  [{st}]{opt_tag}")
+        self._loading = False
+
+        if 0 <= select_row < len(self.items_data):
+            self.list_widget.setCurrentRow(select_row)
+        else:
+            self._on_row_changed(-1)
+
+    def get_items_data(self):
+        clean_items = []
+        for it in self.items_data:
+            item_copy = {
+                "label": it.get("label", "").strip(),
+                "command": it.get("command", ""),
+                "sourceType": it.get("sourceType", "python")
+            }
+            if it.get("optionBoxCommand"):
+                item_copy["optionBoxCommand"] = it["optionBoxCommand"]
+                item_copy["optionBoxSourceType"] = it.get("optionBoxSourceType", "python")
+            clean_items.append(item_copy)
+        return clean_items
+
+    def set_items_data(self, items):
+        self.items_data = [dict(it) for it in items if isinstance(it, dict)]
+        self._refresh_list(select_row=0 if self.items_data else -1)
+
+
+class ButtonEditorDialog(QtWidgets.QDialog):
+    """
+    Dedicated Shelf Button Editor Dialog with real-time Live Preview,
+    Maya dark theme styling, High-DPI scaling, and 3 tabbed parameter sections:
+    1. Appearance & Icon
+    2. Commands (LMB Click and Double Click)
+    3. Popup Menu Items (RMB Dropdown Commands)
+    """
+    def __init__(self, shelf_manager, shelf_index, button_index, button_data, scale=1.0, parent=None):
+        super(ButtonEditorDialog, self).__init__(parent)
+        self.shelf_manager = shelf_manager
+        self.shelf_index = shelf_index
+        self.button_index = button_index
+        self.scale = scale
+        self.initial_data = json.loads(json.dumps(button_data))
+        self.current_data = json.loads(json.dumps(button_data))
+        self._loading = False
+
+        self.setObjectName("ButtonEditorDialog")
+        btn_title = button_data.get("label") or button_data.get("imageOverlayLabel") or "Button"
+        self.setWindowTitle(f"Edit Button: {btn_title}")
+        self.setWindowFlags(QtCore.Qt.Window)
+
+        self._setup_ui()
+        self._apply_stylesheet()
+        self._load_data(self.current_data)
+        self._center_on_screen()
+
+    def _setup_ui(self):
+        s = self.scale
+        root_pad = max(8, int(round(12 * s)))
+        root_spacing = max(6, int(round(10 * s)))
+
+        root_layout = QtWidgets.QVBoxLayout(self)
+        root_layout.setContentsMargins(root_pad, root_pad, root_pad, root_pad)
+        root_layout.setSpacing(root_spacing)
+
+        # -------------------------------------------------------------
+        # 1. LIVE PREVIEW AREA
+        # -------------------------------------------------------------
+        preview_box = QtWidgets.QGroupBox("Live Preview", self)
+        preview_layout = QtWidgets.QVBoxLayout(preview_box)
+        preview_layout.setContentsMargins(
+            max(8, int(round(12 * s))),
+            max(8, int(round(10 * s))),
+            max(8, int(round(12 * s))),
+            max(8, int(round(10 * s)))
+        )
+        preview_layout.setSpacing(max(4, int(round(6 * s))))
+
+        # Shelf slot simulation container
+        self.slot_tray = QtWidgets.QFrame(preview_box)
+        self.slot_tray.setObjectName("preview_slot_tray")
+        slot_tray_h = max(44, int(round(52 * s)))
+        self.slot_tray.setFixedHeight(slot_tray_h)
+
+        slot_layout = QtWidgets.QHBoxLayout(self.slot_tray)
+        slot_layout.setContentsMargins(
+            max(8, int(round(12 * s))),
+            max(2, int(round(4 * s))),
+            max(8, int(round(12 * s))),
+            max(2, int(round(4 * s)))
+        )
+        slot_layout.setSpacing(max(6, int(round(8 * s))))
+
+        self.preview_button = ShelfButton(
+            button_data=self.current_data,
+            shelf_index=-1,
+            button_index=-1,
+            shelf_manager=self.shelf_manager,
+            scale=self.scale,
+            is_preview=True,
+            parent=self.slot_tray
+        )
+        slot_layout.addWidget(self.preview_button)
+
+        preview_hint = QtWidgets.QLabel("(Interactive shelf slot: hover & click to test button states)", self.slot_tray)
+        preview_hint.setStyleSheet("color: #777777; font-size: 15px; font-style: italic;")
+        slot_layout.addWidget(preview_hint)
+        slot_layout.addStretch()
+
+        preview_layout.addWidget(self.slot_tray)
+
+        # Info metadata badges
+        badges_layout = QtWidgets.QHBoxLayout()
+        badges_layout.setContentsMargins(2, 2, 2, 2)
+        badges_layout.setSpacing(max(6, int(round(8 * s))))
+
+        self.badge_size = QtWidgets.QLabel(preview_box)
+        self.badge_size.setObjectName("preview_badge")
+        self.badge_menu = QtWidgets.QLabel(preview_box)
+        self.badge_menu.setObjectName("preview_badge")
+        self.badge_lang = QtWidgets.QLabel(preview_box)
+        self.badge_lang.setObjectName("preview_badge")
+        self.badge_overlay = QtWidgets.QLabel(preview_box)
+        self.badge_overlay.setObjectName("preview_badge")
+
+        badges_layout.addWidget(self.badge_size)
+        badges_layout.addWidget(self.badge_menu)
+        badges_layout.addWidget(self.badge_lang)
+        badges_layout.addWidget(self.badge_overlay)
+        badges_layout.addStretch()
+
+        preview_layout.addLayout(badges_layout)
+        root_layout.addWidget(preview_box)
+
+        # -------------------------------------------------------------
+        # 2. TAB WIDGET
+        # -------------------------------------------------------------
+        self.tab_widget = QtWidgets.QTabWidget(self)
+        root_layout.addWidget(self.tab_widget, 1)
+
+        # --- Tab 1: Appearance & Icon ---
+        tab1_scroll = QtWidgets.QScrollArea(self.tab_widget)
+        tab1_scroll.setWidgetResizable(True)
+        tab1_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+
+        tab1_widget = QtWidgets.QWidget()
+        tab1_form = QtWidgets.QFormLayout(tab1_widget)
+        tab1_form_pad = max(8, int(round(12 * s)))
+        tab1_form.setContentsMargins(tab1_form_pad, tab1_form_pad, tab1_form_pad, tab1_form_pad)
+        tab1_form.setSpacing(max(6, int(round(8 * s))))
+
+        # Icon row: thumbnail + line edit + Browse button
+        icon_row = QtWidgets.QHBoxLayout()
+        thumb_sz = max(28, int(round(34 * s)))
+        self.icon_thumb = QtWidgets.QLabel(tab1_widget)
+        self.icon_thumb.setFixedSize(thumb_sz, thumb_sz)
+        self.icon_thumb.setAlignment(QtCore.Qt.AlignCenter)
+        self.icon_thumb.setStyleSheet("background-color: #2b2b2b; border: 1px solid #444444;")
+        icon_row.addWidget(self.icon_thumb)
+
+        self.icon_edit = QtWidgets.QLineEdit(tab1_widget)
+        self.icon_edit.setPlaceholderText("Icon file name, absolute path, or Maya resource (e.g. uvChooser.svg)")
+        self.icon_edit.textChanged.connect(self._on_parameter_changed)
+        icon_row.addWidget(self.icon_edit, 1)
+
+        self.browse_icon_btn = QtWidgets.QPushButton("Browse...", tab1_widget)
+        self.browse_icon_btn.clicked.connect(self._on_browse_icon)
+        icon_row.addWidget(self.browse_icon_btn)
+        tab1_form.addRow("Icon:", icon_row)
+
+        # Overlay Label
+        self.overlay_edit = QtWidgets.QLineEdit(tab1_widget)
+        self.overlay_edit.setPlaceholderText("Short text overlaid on icon (e.g. ON, OFF, SEL)")
+        self.overlay_edit.textChanged.connect(self._on_parameter_changed)
+        tab1_form.addRow("Overlay Label:", self.overlay_edit)
+
+        # Overlay Text Color
+        text_color_row = QtWidgets.QHBoxLayout()
+        self.text_color_btn = ColorPickerButton(default_color=None, scale=self.scale, parent=tab1_widget)
+        self.text_color_btn.colorChanged.connect(self._on_parameter_changed)
+        text_color_row.addWidget(self.text_color_btn, 1)
+        clear_tc_btn = QtWidgets.QToolButton(tab1_widget)
+        clear_tc_btn.setText("✕")
+        clear_tc_btn.setToolTip("Reset to default white text")
+        clear_tc_btn.clicked.connect(lambda: self.text_color_btn.set_normalized_rgb(None))
+        text_color_row.addWidget(clear_tc_btn)
+        tab1_form.addRow("Overlay Text Color:", text_color_row)
+
+        # Label Background Color
+        bg_color_row = QtWidgets.QHBoxLayout()
+        self.label_bg_btn = ColorPickerButton(default_color=None, scale=self.scale, parent=tab1_widget)
+        self.label_bg_btn.colorChanged.connect(self._on_parameter_changed)
+        bg_color_row.addWidget(self.label_bg_btn, 1)
+        clear_bg_btn = QtWidgets.QToolButton(tab1_widget)
+        clear_bg_btn.setText("✕")
+        clear_bg_btn.setToolTip("Clear background (outline mode)")
+        clear_bg_btn.clicked.connect(lambda: self.label_bg_btn.set_normalized_rgb(None))
+        bg_color_row.addWidget(clear_bg_btn)
+        tab1_form.addRow("Label Back Color:", bg_color_row)
+
+        # Label Background Alpha
+        alpha_row = QtWidgets.QHBoxLayout()
+        self.alpha_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal, tab1_widget)
+        self.alpha_slider.setRange(0, 100)
+        self.alpha_slider.setValue(90)
+        self.alpha_slider.valueChanged.connect(self._on_alpha_slider_changed)
+        alpha_row.addWidget(self.alpha_slider, 1)
+        self.alpha_lbl = QtWidgets.QLabel("90%", tab1_widget)
+        self.alpha_lbl.setFixedWidth(max(34, int(round(40 * s))))
+        alpha_row.addWidget(self.alpha_lbl)
+        tab1_form.addRow("Label Back Alpha:", alpha_row)
+
+        # Custom Button Background
+        btn_bg_row = QtWidgets.QHBoxLayout()
+        self.enable_bg_chk = QtWidgets.QCheckBox("Enable custom button background", tab1_widget)
+        self.enable_bg_chk.toggled.connect(self._on_enable_bg_toggled)
+        btn_bg_row.addWidget(self.enable_bg_chk)
+        self.btn_bg_btn = ColorPickerButton(default_color=[0.22, 0.22, 0.22], scale=self.scale, parent=tab1_widget)
+        self.btn_bg_btn.colorChanged.connect(self._on_parameter_changed)
+        btn_bg_row.addWidget(self.btn_bg_btn, 1)
+        tab1_form.addRow("Button Background:", btn_bg_row)
+
+        # Button Width
+        width_col = QtWidgets.QVBoxLayout()
+        self.radio_width_std = QtWidgets.QRadioButton("Standard Shelf Width (35 px / square)", tab1_widget)
+        self.radio_width_std.setChecked(True)
+        self.radio_width_std.toggled.connect(self._on_width_mode_changed)
+        width_col.addWidget(self.radio_width_std)
+
+        custom_w_row = QtWidgets.QHBoxLayout()
+        self.radio_width_custom = QtWidgets.QRadioButton("Custom Width:", tab1_widget)
+        self.radio_width_custom.toggled.connect(self._on_width_mode_changed)
+        custom_w_row.addWidget(self.radio_width_custom)
+
+        self.custom_width_spin = QtWidgets.QSpinBox(tab1_widget)
+        self.custom_width_spin.setRange(12, 1200)
+        self.custom_width_spin.setValue(35)
+        self.custom_width_spin.setSuffix(" px")
+        self.custom_width_spin.setEnabled(False)
+        self.custom_width_spin.valueChanged.connect(self._on_parameter_changed)
+        custom_w_row.addWidget(self.custom_width_spin, 1)
+        width_col.addLayout(custom_w_row)
+        tab1_form.addRow("Button Width:", width_col)
+
+        # Internal Label / Name
+        self.label_edit = QtWidgets.QLineEdit(tab1_widget)
+        self.label_edit.setPlaceholderText("Internal identifier or label (e.g. TDH_ON)")
+        self.label_edit.textChanged.connect(self._on_parameter_changed)
+        tab1_form.addRow("Label / Name:", self.label_edit)
+
+        # Annotation / Tooltip
+        self.annotation_edit = QtWidgets.QLineEdit(tab1_widget)
+        self.annotation_edit.setPlaceholderText("Tooltip text shown when hovering over the button")
+        self.annotation_edit.textChanged.connect(self._on_parameter_changed)
+        tab1_form.addRow("Tooltip (Annotation):", self.annotation_edit)
+
+        tab1_scroll.setWidget(tab1_widget)
+        self.tab_widget.addTab(tab1_scroll, "Appearance & Icon")
+
+        # --- Tab 2: Commands ---
+        tab2_widget = QtWidgets.QWidget()
+        tab2_layout = QtWidgets.QVBoxLayout(tab2_widget)
+        tab2_layout.setContentsMargins(tab1_form_pad, tab1_form_pad, tab1_form_pad, tab1_form_pad)
+        tab2_layout.setSpacing(max(6, int(round(8 * s))))
+
+        cmd_header = QtWidgets.QHBoxLayout()
+        cmd_title = QtWidgets.QLabel("Command (Left Mouse Button Click):", tab2_widget)
+        cmd_title.setStyleSheet("font-weight: bold;")
+        cmd_header.addWidget(cmd_title)
+        cmd_header.addStretch()
+
+        lang_lbl = QtWidgets.QLabel("Language:", tab2_widget)
+        cmd_header.addWidget(lang_lbl)
+        self.cmd_lang_combo = QtWidgets.QComboBox(tab2_widget)
+        self.cmd_lang_combo.addItems(["python", "mel"])
+        self.cmd_lang_combo.currentIndexChanged.connect(self._on_parameter_changed)
+        cmd_header.addWidget(self.cmd_lang_combo)
+        tab2_layout.addLayout(cmd_header)
+
+        self.cmd_editor = CodeEditorWidget(scale=self.scale, parent=tab2_widget)
+        self.cmd_editor.setPlaceholderText("# Enter Python or MEL script executed on LMB click...")
+        self.cmd_editor.textChanged.connect(self._on_parameter_changed)
+        self.cmd_editor.setMinimumHeight(max(110, int(round(140 * s))))
+        tab2_layout.addWidget(self.cmd_editor, 2)
+
+        dc_title = QtWidgets.QLabel("Double-Click Command (optional):", tab2_widget)
+        dc_title.setStyleSheet("font-weight: bold;")
+        tab2_layout.addWidget(dc_title)
+
+        self.double_click_editor = CodeEditorWidget(scale=self.scale, parent=tab2_widget)
+        self.double_click_editor.setPlaceholderText("# Optional script executed on double-click...")
+        self.double_click_editor.textChanged.connect(self._on_parameter_changed)
+        self.double_click_editor.setMinimumHeight(max(60, int(round(80 * s))))
+        tab2_layout.addWidget(self.double_click_editor, 1)
+
+        self.tab_widget.addTab(tab2_widget, "Commands")
+
+        # --- Tab 3: Popup Menu Items ---
+        self.popup_menu_tab = PopupMenuEditorTab(
+            initial_items=self.current_data.get("menuItems", []),
+            scale=self.scale,
+            parent=self.tab_widget
+        )
+        self.popup_menu_tab.itemsChanged.connect(self._on_parameter_changed)
+        self.tab_widget.addTab(self.popup_menu_tab, "Popup Menu Items")
+
+        # -------------------------------------------------------------
+        # 3. BOTTOM BUTTONS BAR
+        # -------------------------------------------------------------
+        bottom_layout = QtWidgets.QHBoxLayout()
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(max(6, int(round(8 * s))))
+
+        self.reset_btn = QtWidgets.QPushButton("Reset", self)
+        self.reset_btn.setObjectName("reset_btn")
+        self.reset_btn.setToolTip("Revert all parameters to initial values when dialog was opened")
+        self.reset_btn.clicked.connect(self._on_reset_clicked)
+        bottom_layout.addWidget(self.reset_btn)
+
+        bottom_layout.addStretch()
+
+        self.cancel_btn = QtWidgets.QPushButton("Cancel", self)
+        self.cancel_btn.clicked.connect(self.reject)
+        bottom_layout.addWidget(self.cancel_btn)
+
+        self.save_btn = QtWidgets.QPushButton("Save", self)
+        self.save_btn.setObjectName("save_btn")
+        self.save_btn.setDefault(True)
+        self.save_btn.clicked.connect(self._on_save_clicked)
+        bottom_layout.addWidget(self.save_btn)
+
+        root_layout.addLayout(bottom_layout)
+
+    def _apply_stylesheet(self):
+        s = self.scale
+        font_sz = max(9, int(round(11 * s)))
+        chk_sz = max(12, int(round(14 * s)))
+        btn_pad_v = max(3, int(round(5 * s)))
+        btn_pad_h = max(8, int(round(12 * s)))
+        radius_sm = max(2, int(round(3 * s)))
+        radius_md = max(3, int(round(4 * s)))
+
+        btn_r_setting = 1
+        if self.shelf_manager and hasattr(self.shelf_manager, "settings"):
+            val = self.shelf_manager.settings.get("BUTTON_RADIUS")
+            if val is None:
+                val = self.shelf_manager.settings.get("BUTTON_CORNER_RADIUS", 1)
+            try:
+                btn_r_setting = max(0, int(val))
+            except (ValueError, TypeError):
+                btn_r_setting = 1
+        btn_radius = int(round(btn_r_setting * s))
+
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: #373737;
+                color: #e0e0e0;
+                font-size: {font_sz}px;
+            }}
+            QGroupBox {{
+                font-weight: bold;
+                background-color: transparent;
+                border: 1px solid #4a4a4a;
+                margin-top: 10px;
+                padding-top: 10px;
+                color: #b8b8b8;
+                font-size: {font_sz}px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 10px;
+                padding: 0 4px;
+                background-color: #373737;
+                color: #cccccc;
+            }}
+            QFrame#preview_slot_tray {{
+                background-color: #444444;
+                border: 1px dashed #5a5a5a;
+            }}
+            QLabel#preview_badge {{
+                background-color: #444444;
+                color: #88c0d0;
+                border: 1px solid #505050;
+                padding: 2px 6px;
+                font-size: {max(8, int(round(9.5 * s)))}px;
+                font-weight: bold;
+            }}
+            QTabWidget::pane {{
+                border: 1px solid #4e4e4e;
+                background-color: #444444;
+                top: -1px;
+            }}
+            QTabBar::tab {{
+                background: #373737;
+                color: #aaaaaa;
+                padding: {btn_pad_v + 1}px {btn_pad_h}px;
+                border: 1px solid #484848;
+                border-bottom: none;
+                margin-right: 2px;
+                font-size: {font_sz}px;
+            }}
+            QTabBar::tab:selected {{
+                background: #444444;
+                color: #ffffff;
+                border: 1px solid #4e4e4e;
+                border-bottom: 1px solid #444444;
+                font-weight: bold;
+            }}
+            QTabBar::tab:hover:!selected {{
+                background: #404040;
+                color: #dddddd;
+            }}
+            QLabel {{
+                color: #cccccc;
+                font-size: {font_sz}px;
+            }}
+            QLineEdit, QPlainTextEdit {{
+                background-color: #2b2b2b;
+                color: #ffffff;
+                border: 1px solid #444444;
+                padding: 3px 6px;
+                font-size: {font_sz}px;
+                selection-background-color: #5285a6;
+            }}
+            QLineEdit:focus, QPlainTextEdit:focus {{
+                border: 1px solid #5285a6;
+            }}
+            QSpinBox, QComboBox {{
+                background-color: #2b2b2b;
+                color: #ffffff;
+                border: 1px solid #444444;
+                padding: 3px 6px;
+                font-size: {font_sz}px;
+            }}
+            QSpinBox:focus, QComboBox:focus {{
+                border: 1px solid #5285a6;
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: {max(14, int(round(16 * s)))}px;
+                border-left: 1px solid #444444;
+            }}
+            QComboBox::down-arrow {{
+                width: 0;
+                height: 0;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid #cccccc;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #373737;
+                color: #ffffff;
+                selection-background-color: #5285a6;
+                selection-color: #ffffff;
+                border: 1px solid #444444;
+                font-size: {font_sz}px;
+            }}
+            QCheckBox, QRadioButton {{
+                color: #cccccc;
+                font-size: {font_sz}px;
+                spacing: 6px;
+            }}
+            QCheckBox::indicator, QRadioButton::indicator {{
+                width: {chk_sz}px;
+                height: {chk_sz}px;
+            }}
+            QPushButton {{
+                background-color: #444444;
+                color: #e0e0e0;
+                border: 1px solid #505050;
+                padding: {btn_pad_v}px {btn_pad_h}px;
+                font-size: {font_sz}px;
+            }}
+            QPushButton:hover {{
+                background-color: #525252;
+                border-color: #606060;
+            }}
+            QPushButton:pressed {{
+                background-color: #2e2e2e;
+                border-color: #404040;
+            }}
+            QPushButton#save_btn {{
+                background-color: #5285a6;
+                color: #ffffff;
+                font-weight: bold;
+                border: 1px solid #629ec4;
+            }}
+            QPushButton#save_btn:hover {{
+                background-color: #629ec4;
+            }}
+            QPushButton#reset_btn {{
+                background-color: #444444;
+                color: #ffb74d;
+                border: 1px solid #505050;
+            }}
+            QPushButton#reset_btn:hover {{
+                background-color: #525252;
+                color: #ffa726;
+            }}
+            QToolButton {{
+                background-color: #444444;
+                color: #cccccc;
+                border: 1px solid #505050;
+                padding: 2px 6px;
+            }}
+            QToolButton:hover {{
+                background-color: #525252;
+            }}
+            QListWidget {{
+                background-color: #2b2b2b;
+                color: #e0e0e0;
+                border: 1px solid #444444;
+                font-size: {font_sz}px;
+            }}
+            QListWidget::item {{
+                padding: 4px 6px;
+                border-bottom: 1px solid #373737;
+            }}
+            QListWidget::item:hover {{
+                background-color: #373737;
+            }}
+            QListWidget::item:selected {{
+                background-color: #5285a6;
+                color: #ffffff;
+            }}
+            QSlider::groove:horizontal {{
+                height: 6px;
+                background: #2b2b2b;
+                border: 1px solid #444444;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: #5285a6;
+            }}
+            QSlider::handle:horizontal {{
+                background: #888888;
+                border: 1px solid #aaaaaa;
+                width: 14px;
+                margin-top: -4px;
+                margin-bottom: -4px;
+            }}
+            QSlider::handle:horizontal:hover {{
+                background: #5285a6;
+                border-color: #629ec4;
+            }}
+            QScrollArea {{
+                background: transparent;
+                border: none;
+            }}
+            ShelfButton {{
+                background-color: transparent;
+                border: 1px solid transparent;
+                border-radius: {btn_radius}px;
+                padding: 0px;
+                margin: 0px;
+            }}
+            ShelfButton:hover {{
+                background-color: #444444;
+                border: 1px solid #606060;
+                border-radius: {btn_radius}px;
+            }}
+            ShelfButton:pressed {{
+                background-color: #2b2b2b;
+                border: 1px solid #373737;
+                border-radius: {btn_radius}px;
+                padding: 1px 0px 0px 1px;
+            }}
+        """)
+
+    def _center_on_screen(self):
+        w = max(620, int(round(660 * self.scale)))
+        h = max(680, int(round(720 * self.scale)))
+        self.resize(w, h)
+        parent = self.parent()
+        if parent:
+            geo = parent.frameGeometry()
+            x = geo.x() + (geo.width() - w) // 2
+            y = geo.y() + (geo.height() - h) // 2
+            self.move(max(0, x), max(0, y))
+        else:
+            screen = QtWidgets.QApplication.primaryScreen()
+            if screen:
+                geo = screen.availableGeometry()
+                x = geo.x() + (geo.width() - w) // 2
+                y = geo.y() + (geo.height() - h) // 2
+                self.move(max(0, x), max(0, y))
+
+    def _on_browse_icon(self):
+        current_icon = self.icon_edit.text().strip()
+        start_dir = ""
+        if current_icon and os.path.isabs(current_icon):
+            start_dir = os.path.dirname(current_icon)
+        elif cmds and hasattr(cmds, "internalVar"):
+            try:
+                start_dir = cmds.internalVar(userBitmapsDir=True) or ""
+            except Exception:
+                start_dir = ""
+
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Select Shelf Button Icon",
+            start_dir,
+            "Image Files (*.png *.svg *.xpm *.jpg *.jpeg *.bmp);;All Files (*.*)"
+        )
+        if file_path:
+            self.icon_edit.setText(file_path)
+
+    def _on_alpha_slider_changed(self, value):
+        self.alpha_lbl.setText(f"{value}%")
+        self._on_parameter_changed()
+
+    def _on_enable_bg_toggled(self, checked):
+        self.btn_bg_btn.setEnabled(checked)
+        self._on_parameter_changed()
+
+    def _on_width_mode_changed(self):
+        is_custom = self.radio_width_custom.isChecked()
+        self.custom_width_spin.setEnabled(is_custom)
+        self._on_parameter_changed()
+
+    def _load_data(self, data):
+        self._loading = True
+
+        self.icon_edit.setText(data.get("image", "commandButton.png"))
+        self.overlay_edit.setText(data.get("imageOverlayLabel", ""))
+
+        # Text color
+        tc = data.get("labelColor") or data.get("overlayLabelColor")
+        self.text_color_btn.set_normalized_rgb(tc, emit=False)
+
+        # Label background
+        lbg = data.get("labelBackground")
+        if not lbg and "overlayLabelBackColor" in data:
+            olb = data["overlayLabelBackColor"]
+            if olb and len(olb) >= 3:
+                lbg = olb[:3]
+        self.label_bg_btn.set_normalized_rgb(lbg, emit=False)
+
+        # Alpha
+        alpha = data.get("backgroundTransparency")
+        if alpha is None and "overlayLabelBackColor" in data:
+            olb = data["overlayLabelBackColor"]
+            if olb and len(olb) >= 4:
+                alpha = olb[3]
+        if alpha is None:
+            alpha = 0.9
+        try:
+            slider_val = max(0, min(100, int(round(float(alpha) * 100))))
+        except (ValueError, TypeError):
+            slider_val = 90
+        self.alpha_slider.setValue(slider_val)
+        self.alpha_lbl.setText(f"{slider_val}%")
+
+        # Custom button background
+        has_bg = bool(data.get("enableBackground", False))
+        self.enable_bg_chk.setChecked(has_bg)
+        bbg = data.get("buttonBackground") or data.get("backgroundColor")
+        self.btn_bg_btn.set_normalized_rgb(bbg, emit=False)
+        self.btn_bg_btn.setEnabled(has_bg)
+
+        # Width
+        is_custom = (data.get("flexibleWidthType") == 2)
+        w = data.get("width") or data.get("flexibleWidthValue") or 35
+        try:
+            w_int = int(w)
+        except (ValueError, TypeError):
+            w_int = 35
+
+        if is_custom:
+            self.radio_width_custom.setChecked(True)
+            self.custom_width_spin.setValue(w_int)
+            self.custom_width_spin.setEnabled(True)
+        else:
+            self.radio_width_std.setChecked(True)
+            self.custom_width_spin.setValue(w_int if w_int != 35 else 35)
+            self.custom_width_spin.setEnabled(False)
+
+        # Label & Tooltip
+        self.label_edit.setText(data.get("label", ""))
+        self.annotation_edit.setText(data.get("annotation", ""))
+
+        # Commands
+        st = data.get("sourceType", "mel").lower()
+        self.cmd_lang_combo.setCurrentText("python" if st == "python" else "mel")
+        self.cmd_editor.setPlainText(data.get("command", ""))
+        self.double_click_editor.setPlainText(data.get("doubleClickCommand", ""))
+
+        # Menu items
+        self.popup_menu_tab.set_items_data(data.get("menuItems", []))
+
+        self._loading = False
+        self._on_parameter_changed()
+
+    def _collect_current_data(self):
+        data = dict(self.current_data)
+        data["image"] = self.icon_edit.text().strip() or "commandButton.png"
+        if "image1" in data or "image" in data:
+            data["image1"] = data["image"]
+        data["imageOverlayLabel"] = self.overlay_edit.text()
+
+        # Text color
+        tc = self.text_color_btn.get_normalized_rgb()
+        if tc is not None:
+            data["labelColor"] = tc
+            data["overlayLabelColor"] = tc
+        else:
+            data.pop("labelColor", None)
+            data.pop("overlayLabelColor", None)
+
+        # Label background
+        lbg = self.label_bg_btn.get_normalized_rgb()
+        alpha = round(self.alpha_slider.value() / 100.0, 3)
+        if lbg is not None:
+            data["labelBackground"] = lbg
+            data["backgroundTransparency"] = alpha
+            data["overlayLabelBackColor"] = [lbg[0], lbg[1], lbg[2], alpha]
+        else:
+            data.pop("labelBackground", None)
+            data.pop("backgroundTransparency", None)
+            data.pop("overlayLabelBackColor", None)
+
+        # Button background
+        if self.enable_bg_chk.isChecked():
+            data["enableBackground"] = True
+            bbg = self.btn_bg_btn.get_normalized_rgb() or [0.22, 0.22, 0.22]
+            data["buttonBackground"] = bbg
+            data["backgroundColor"] = bbg
+        else:
+            data["enableBackground"] = False
+            data.pop("buttonBackground", None)
+            data.pop("backgroundColor", None)
+
+        # Width
+        if self.radio_width_custom.isChecked():
+            w_val = int(self.custom_width_spin.value())
+            data["flexibleWidthType"] = 2
+            data["flexibleWidthValue"] = w_val
+            data["width"] = w_val
+        else:
+            data["flexibleWidthType"] = 1
+            data["width"] = 35
+            data.pop("flexibleWidthValue", None)
+
+        data["label"] = self.label_edit.text().strip()
+        data["annotation"] = self.annotation_edit.text().strip()
+        data["sourceType"] = self.cmd_lang_combo.currentText()
+        data["command"] = self.cmd_editor.toPlainText()
+
+        dc = self.double_click_editor.toPlainText().strip()
+        if dc:
+            data["doubleClickCommand"] = dc
+        else:
+            data.pop("doubleClickCommand", None)
+
+        menu_items = self.popup_menu_tab.get_items_data()
+        if menu_items:
+            data["menuItems"] = menu_items
+        else:
+            data.pop("menuItems", None)
+
+        return data
+
+    def _on_parameter_changed(self):
+        if self._loading:
+            return
+        self.current_data = self._collect_current_data()
+        self.preview_button.update_data(self.current_data)
+
+        # Update thumbnail
+        if self.preview_button._pixmap and not self.preview_button._pixmap.isNull():
+            thumb_sz = max(24, int(round(32 * self.scale)))
+            self.icon_thumb.setPixmap(
+                self.preview_button._pixmap.scaled(
+                    thumb_sz, thumb_sz,
+                    QtCore.Qt.KeepAspectRatio,
+                    QtCore.Qt.SmoothTransformation
+                )
+            )
+        else:
+            self.icon_thumb.clear()
+
+        # Update preview badges
+        w = self.preview_button.width()
+        h = self.preview_button.height()
+        self.badge_size.setText(f"Size: {w} × {h} px")
+
+        item_count = len(self.popup_menu_tab.items_data)
+        if self.preview_button.has_custom_menu:
+            self.badge_menu.setText(f"Dropdown: Yes ({item_count} items)")
+        else:
+            self.badge_menu.setText("Dropdown: None")
+
+        lang = self.cmd_lang_combo.currentText().upper()
+        self.badge_lang.setText(f"Lang: {lang}")
+
+        ov = self.overlay_edit.text()
+        self.badge_overlay.setText(f"Overlay: \"{ov}\"" if ov else "Overlay: (None)")
+
+        # Update window title
+        btn_title = self.label_edit.text().strip() or self.overlay_edit.text().strip() or "Button"
+        self.setWindowTitle(f"Edit Button: {btn_title}")
+
+    def _on_reset_clicked(self):
+        self._load_data(self.initial_data)
+
+    def _on_save_clicked(self):
+        final_data = self._collect_current_data()
+        success = self.shelf_manager.save_button_data(self.shelf_index, self.button_index, final_data)
+        if success:
+            self.accept()
+        else:
+            cmds.warning("spShelf: Failed to save button data.")
 
 
 class SeparatorWidget(QtWidgets.QFrame):
@@ -955,27 +2166,26 @@ class SettingsIslandButton(QtWidgets.QToolButton):
         is_hover = self._is_hovered
 
         if is_checked:
-            # Active (rollout open) -> Maya Teal Accent
-            bg_color = QtGui.QColor("#007363") if is_hover else QtGui.QColor("#005f52")
-            border_color = QtGui.QColor("#02a58a")
+            # Active (rollout open) -> Maya Blue Accent
+            bg_color = QtGui.QColor("#5285a6") if is_hover else QtGui.QColor("#427090")
+            border_color = QtGui.QColor("#629ec4")
         elif is_down:
-            bg_color = QtGui.QColor("#252525")
-            border_color = QtGui.QColor("#3d3d3d")
+            bg_color = QtGui.QColor("#2b2b2b")
+            border_color = QtGui.QColor("#373737")
         elif is_hover:
-            bg_color = QtGui.QColor("#444444")
+            bg_color = QtGui.QColor("#525252")
             border_color = QtGui.QColor("#606060")
         else:
             # Normal island
-            bg_color = QtGui.QColor("#333333")
-            border_color = QtGui.QColor("#484848")
+            bg_color = QtGui.QColor("#444444")
+            border_color = QtGui.QColor("#505050")
 
         rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        radius = max(2.0, 3.0 * self.scale)
 
-        # Draw rounded island background & border
+        # Draw square island background & border
         painter.setPen(QtGui.QPen(border_color, max(1.0, 1.0 * self.scale)))
         painter.setBrush(QtGui.QBrush(bg_color))
-        painter.drawRoundedRect(rect, radius, radius)
+        painter.drawRect(rect)
 
         # Draw gear icon centered
         target_icon_sz = max(10, int(round(14 * self.scale)))
@@ -1069,27 +2279,26 @@ class ShelfToggleIslandButton(QtWidgets.QToolButton):
         is_hover = self._is_hovered
 
         if is_checked:
-            # Active (Maya shelf visible) -> Maya Teal Accent
-            bg_color = QtGui.QColor("#007363") if is_hover else QtGui.QColor("#005f52")
-            border_color = QtGui.QColor("#02a58a")
+            # Active (Maya shelf visible) -> Maya Blue Accent
+            bg_color = QtGui.QColor("#5285a6") if is_hover else QtGui.QColor("#427090")
+            border_color = QtGui.QColor("#629ec4")
         elif is_down:
-            bg_color = QtGui.QColor("#252525")
-            border_color = QtGui.QColor("#3d3d3d")
+            bg_color = QtGui.QColor("#2b2b2b")
+            border_color = QtGui.QColor("#373737")
         elif is_hover:
-            bg_color = QtGui.QColor("#444444")
+            bg_color = QtGui.QColor("#525252")
             border_color = QtGui.QColor("#606060")
         else:
             # Normal island
-            bg_color = QtGui.QColor("#333333")
-            border_color = QtGui.QColor("#484848")
+            bg_color = QtGui.QColor("#444444")
+            border_color = QtGui.QColor("#505050")
 
         rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        radius = max(2.0, 3.0 * self.scale)
 
-        # Draw rounded island background & border
+        # Draw square island background & border
         painter.setPen(QtGui.QPen(border_color, max(1.0, 1.0 * self.scale)))
         painter.setBrush(QtGui.QBrush(bg_color))
-        painter.drawRoundedRect(rect, radius, radius)
+        painter.drawRect(rect)
 
         # Draw shelf icon centered
         target_icon_sz = max(10, int(round(14 * self.scale)))
@@ -1507,9 +2716,8 @@ class CollapsibleSection(QtWidgets.QWidget):
 
         self.header_btn.setStyleSheet(f"""
             QToolButton {{
-                background-color: #383838;
-                border: 1px solid #2e2e2e;
-                border-radius: {radius}px;
+                background-color: #444444;
+                border: 1px solid #373737;
                 color: #e0e0e0;
                 font-weight: bold;
                 font-size: {font_sz}px;
@@ -1517,7 +2725,8 @@ class CollapsibleSection(QtWidgets.QWidget):
                 padding-left: {pad_l}px;
             }}
             QToolButton:hover {{
-                background-color: #444444;
+                background-color: #525252;
+                border-color: #5a5a5a;
             }}
         """)
         self.header_btn.clicked.connect(self._toggle_collapse)
@@ -1866,33 +3075,63 @@ class SpShelfWindow(QtWidgets.QWidget):
         menu_item_pad_v = max(2, int(round(4 * s)))
         menu_item_pad_h = max(10, int(round(16 * s)))
 
+        btn_r_setting = 1
+        if self.manager and hasattr(self.manager, "settings"):
+            val = self.manager.settings.get("BUTTON_RADIUS")
+            if val is None:
+                val = self.manager.settings.get("BUTTON_CORNER_RADIUS", 1)
+            try:
+                btn_r_setting = max(0, int(val))
+            except (ValueError, TypeError):
+                btn_r_setting = 1
+        btn_radius = int(round(btn_r_setting * s))
+
         self.setStyleSheet(f"""
             QWidget#sp_shelf_window_qt {{
-                background-color: #262626;
-                border: 1px solid #454545;
-                border-radius: {radius_lg}px;
+                background-color: #373737;
+                border: 1px solid #444444;
             }}
             QScrollArea {{
                 background: transparent;
                 border: none;
             }}
-            ShelfButton, QToolButton {{
+            ShelfButton {{
                 background-color: transparent;
                 border: 1px solid transparent;
-                border-radius: {radius_md}px;
+                border-radius: {btn_radius}px;
                 padding: 0px;
                 margin: 0px;
             }}
-            ShelfButton:hover, QToolButton:hover {{
+            ShelfButton:hover {{
+                background-color: #444444;
+                border: 1px solid #606060;
+                border-radius: {btn_radius}px;
+            }}
+            ShelfButton:pressed {{
+                background-color: #2b2b2b;
+                border: 1px solid #373737;
+                border-radius: {btn_radius}px;
+                padding: 1px 0px 0px 1px;
+            }}
+            ShelfButton:focus {{
+                outline: none;
+            }}
+            QToolButton {{
+                background-color: transparent;
+                border: 1px solid transparent;
+                padding: 0px;
+                margin: 0px;
+            }}
+            QToolButton:hover {{
                 background-color: #444444;
                 border: 1px solid #606060;
             }}
-            ShelfButton:pressed, QToolButton:pressed {{
-                background-color: #1f1f1f;
-                border: 1px solid #333333;
+            QToolButton:pressed {{
+                background-color: #2b2b2b;
+                border: 1px solid #373737;
                 padding: 1px 0px 0px 1px;
             }}
-            ShelfButton:focus, QToolButton:focus {{
+            QToolButton:focus {{
                 outline: none;
             }}
             QCheckBox {{
@@ -1905,32 +3144,36 @@ class SpShelfWindow(QtWidgets.QWidget):
                 height: {chk_sz}px;
             }}
             QSpinBox {{
-                background-color: #1e1e1e;
+                background-color: #2b2b2b;
                 color: #ffffff;
                 border: 1px solid #444444;
-                border-radius: {radius_sm}px;
                 padding: {input_pad_v}px {input_pad_h}px;
                 font-size: {font_sz}px;
             }}
             QSpinBox:hover {{
                 border-color: #606060;
             }}
+            QSpinBox:focus {{
+                border-color: #5285a6;
+            }}
             QComboBox {{
-                background-color: #1e1e1e;
+                background-color: #2b2b2b;
                 color: #ffffff;
                 border: 1px solid #444444;
-                border-radius: {radius_sm}px;
                 padding: {input_pad_v}px {input_pad_h}px;
                 font-size: {font_sz}px;
             }}
             QComboBox:hover {{
                 border-color: #606060;
             }}
+            QComboBox:focus {{
+                border-color: #5285a6;
+            }}
             QComboBox::drop-down {{
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
                 width: {combo_drop_w}px;
-                border-left: 1px solid #383838;
+                border-left: 1px solid #444444;
             }}
             QComboBox::down-arrow {{
                 width: 0;
@@ -1941,39 +3184,45 @@ class SpShelfWindow(QtWidgets.QWidget):
                 margin-right: {arrow_margin}px;
             }}
             QComboBox QAbstractItemView {{
-                background-color: #262626;
+                background-color: #373737;
                 color: #ffffff;
-                selection-background-color: #005f52;
+                selection-background-color: #5285a6;
                 selection-color: #ffffff;
                 border: 1px solid #444444;
                 font-size: {font_sz}px;
             }}
             QPushButton {{
-                background-color: #383838;
+                background-color: #444444;
                 color: #e0e0e0;
-                border: 1px solid #484848;
-                border-radius: {radius_sm}px;
+                border: 1px solid #505050;
                 padding: {btn_pad_v}px {btn_pad_h}px;
                 font-size: {font_sz}px;
             }}
             QPushButton:hover {{
-                background-color: #4c4c4c;
+                background-color: #525252;
+                border-color: #606060;
+            }}
+            QPushButton:pressed {{
+                background-color: #2e2e2e;
+                border-color: #404040;
             }}
             QScrollBar:vertical {{
-                background: #202020;
+                background: #2b2b2b;
                 width: {scrollbar_w}px;
                 margin: 0;
             }}
             QScrollBar::handle:vertical {{
                 background: #505050;
                 min-height: {scrollbar_min_h}px;
-                border-radius: {radius_lg}px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: #606060;
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0px;
             }}
             QMenu {{
-                background-color: #2b2b2b;
+                background-color: #373737;
                 color: #e0e0e0;
                 border: 1px solid #444444;
                 padding: {menu_pad}px;
@@ -1983,7 +3232,13 @@ class SpShelfWindow(QtWidgets.QWidget):
                 padding: {menu_item_pad_v}px {menu_item_pad_h}px;
             }}
             QMenu::item:selected {{
-                background-color: #005f52;
+                background-color: #5285a6;
+                color: #ffffff;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background-color: #444444;
+                margin: 2px 4px;
             }}
         """)
 
@@ -2362,7 +3617,7 @@ class SpShelfWindow(QtWidgets.QWidget):
 
         # Add current shelf button
         add_shelf_btn = QtWidgets.QPushButton("Add Current Shelf", settings_section)
-        add_shelf_btn.setStyleSheet(f"background-color: #005f52; font-weight: bold; min-height: {btn_h}px;")
+        add_shelf_btn.setStyleSheet(f"background-color: #5285a6; color: #ffffff; font-weight: bold; min-height: {btn_h}px;")
         add_shelf_btn.setFixedHeight(btn_h)
         add_shelf_btn.clicked.connect(self.manager.add_current_shelf)
         layout.addWidget(add_shelf_btn)
@@ -2434,6 +3689,23 @@ class SpShelfWindow(QtWidgets.QWidget):
         row_spacing_layout.addWidget(self.row_spacing_spin)
         layout.addLayout(row_spacing_layout)
 
+        # Button corner radius row
+        btn_radius_layout = QtWidgets.QHBoxLayout()
+        btn_radius_lbl = QtWidgets.QLabel("Button radius:", settings_section)
+        btn_radius_lbl.setStyleSheet(f"color: #cccccc; font-size: {font_sz}px;")
+        self.btn_radius_spin = QtWidgets.QSpinBox(settings_section)
+        self.btn_radius_spin.setFixedHeight(btn_h)
+        self.btn_radius_spin.setRange(0, 30)
+        self.btn_radius_spin.setSuffix(" px")
+        btn_rad_val = self.manager.settings.get("BUTTON_RADIUS")
+        if btn_rad_val is None:
+            btn_rad_val = self.manager.settings.get("BUTTON_CORNER_RADIUS", 1)
+        self.btn_radius_spin.setValue(int(btn_rad_val))
+        self.btn_radius_spin.valueChanged.connect(self._on_btn_radius_live_changed)
+        btn_radius_layout.addWidget(btn_radius_lbl)
+        btn_radius_layout.addWidget(self.btn_radius_spin)
+        layout.addLayout(btn_radius_layout)
+
         # Checkboxes
         self.cb_close_repeat = QtWidgets.QCheckBox("Close on Key Release", settings_section)
         self.cb_close_repeat.setChecked(self.manager.settings.get("CLOSE_ON_REPEAT_FLAG", False))
@@ -2463,7 +3735,7 @@ class SpShelfWindow(QtWidgets.QWidget):
 
         # Save Settings button
         save_btn = QtWidgets.QPushButton("Save Settings", settings_section)
-        save_btn.setStyleSheet(f"background-color: #1a6d9e; font-weight: bold; min-height: {btn_h}px;")
+        save_btn.setStyleSheet(f"background-color: #5285a6; color: #ffffff; font-weight: bold; min-height: {btn_h}px;")
         save_btn.setFixedHeight(btn_h)
         save_btn.clicked.connect(self._save_settings_from_ui)
         layout.addWidget(save_btn)
@@ -2503,9 +3775,16 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.adjust_size_to_content()
         self._update_settings_btn_pos()
 
+    def _on_btn_radius_live_changed(self, val):
+        """Live updates button corner radius across shelf buttons and repaints window."""
+        self.manager.settings["BUTTON_RADIUS"] = val
+        self._apply_stylesheet()
+        self.update()
+
     def _save_settings_from_ui(self):
         self.manager.settings["COLUMN_COUNT"] = self.col_spin.value()
         self.manager.settings["ROW_SPACING"] = self.row_spacing_spin.value()
+        self.manager.settings["BUTTON_RADIUS"] = self.btn_radius_spin.value()
         self.manager.settings["CLOSE_ON_REPEAT_FLAG"] = self.cb_close_repeat.isChecked()
         self.manager.settings["SHOW_WINDOW_UNDER_CURSOR"] = self.cb_under_cursor.isChecked()
         show_frame_label = self.cb_show_label.isChecked()
@@ -2599,6 +3878,7 @@ class SpShelf:
     DEFAULT_SETTINGS = {
         "COLUMN_COUNT": 4,
         "ROW_SPACING": 1,
+        "BUTTON_RADIUS": 1,
         "SCALE_MODE": "auto",
         "CUSTOM_SCALE": 100,
         "CLOSE_ON_REPEAT_FLAG": False,
@@ -2637,6 +3917,7 @@ class SpShelf:
 
         # Cached Qt Window instance
         self.window_widget = None
+        self._button_editor = None
 
     def load_user_data(self):
         """Loads shelves and settings from JSON file into memory."""
@@ -2886,6 +4167,67 @@ class SpShelf:
 
         if self.window_widget:
             self.window_widget.rebuild_content()
+
+    def open_button_editor(self, shelf_idx, button_idx):
+        """
+        Opens the button editor dialog for the specified shelf button.
+        """
+        log_debug(f"open_button_editor: shelf={shelf_idx}, button={button_idx}")
+        if not (0 <= shelf_idx < len(self.shelves)):
+            cmds.warning(f"spShelf: Invalid shelf index {shelf_idx}")
+            return
+        shelf = self.shelves[shelf_idx]
+        buttons = shelf.get("buttons", [])
+        if not (0 <= button_idx < len(buttons)):
+            cmds.warning(f"spShelf: Invalid button index {button_idx}")
+            return
+
+        button_data = buttons[button_idx]
+        if not isinstance(button_data, dict) or button_data.get("type") == "separator":
+            cmds.warning("spShelf: Cannot edit separators with button editor.")
+            return
+
+        # Close existing editor if open
+        if hasattr(self, "_button_editor") and self._button_editor is not None:
+            try:
+                self._button_editor.close()
+                self._button_editor.deleteLater()
+            except Exception:
+                pass
+            self._button_editor = None
+
+        self._button_editor = ButtonEditorDialog(
+            shelf_manager=self,
+            shelf_index=shelf_idx,
+            button_index=button_idx,
+            button_data=button_data,
+            scale=self.get_ui_scale(),
+            parent=get_maya_main_window()
+        )
+        self._button_editor.show()
+        self._button_editor.raise_()
+        self._button_editor.activateWindow()
+
+    def save_button_data(self, shelf_idx, button_idx, updated_button_data):
+        """
+        Updates the button data at the specified shelf index and button index,
+        saves to JSON file, and rebuilds the UI.
+        """
+        log_debug(f"save_button_data: shelf={shelf_idx}, button={button_idx}, label={updated_button_data.get('label')}")
+        if not (0 <= shelf_idx < len(self.shelves)):
+            return False
+        shelf = self.shelves[shelf_idx]
+        buttons = shelf.setdefault("buttons", [])
+        if not (0 <= button_idx < len(buttons)):
+            return False
+
+        buttons[button_idx] = updated_button_data
+        self.save_user_data()
+
+        if self.window_widget:
+            self.window_widget.rebuild_content()
+            self.window_widget.adjust_size_to_content()
+        return True
 
     def confirm_and_delete_button(self, shelf_idx, button_idx):
         res = cmds.confirmDialog(

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0]
+- **Interactive Button Editor Dialog with Live Preview**:
+    - Added **«Edit Button...»** action with native icon to shelf button right-click context menu.
+    - Implemented **`ButtonEditorDialog`** matching Maya's dark theme and responsive to High-DPI system scaling:
+        - **Live Interactive Preview Panel**: 100% accurate rendering slot utilizing `ShelfButton` displaying real-time hover/pressed states, custom background, custom width, overlay text, colors, alpha transparency, and corner dropdown indicator.
+        - **Metadata Status Badges**: Live indicators displaying slot dimensions (`Width × Height px`), dropdown menu item count, script language (`Python`/`MEL`), and overlay text.
+        - **Tab 1: Appearance & Icon**: File browser & icon thumbnail, overlay text, `ColorPickerButton` for overlay text color and background color, transparency alpha slider (0-100%), custom button background color toggle, button width mode selector (standard 35px vs custom px), label name, and tooltip annotation.
+        - **Tab 2: Commands**: Monospace code editor with 4-space tab indentation for primary LMB command and optional double-click command, with Python/MEL language selector.
+        - **Tab 3: Popup Menu Items**: Comprehensive manager for RMB dropdown menu items (`PopupMenuEditorTab`) with Add, Delete, Move Up, Move Down, label, language, script command, and Option Box command settings.
+        - **Save, Cancel & Reset**: Instant validation and persistence to `sp_shelf_data.json` with immediate UI refresh (`rebuild_content`), safe cancellation, and one-click reset to initial parameters.
+- **Maya Theme Alignment & Button Corner Radius**:
+    - Updated window backgrounds, tabs, frames, and buttons to standard Maya dark palette (`#373737`, `#444444`, and `#5285a6` accent).
+    - Removed excessive border radiuses across UI elements for a clean, square Maya-native aesthetic.
+    - Added configurable shelf button corner radius setting (`BUTTON_RADIUS`, default `1px`) with live interactive update and spinbox control in Settings.
+
 ## [2.2.4]
 - **Button Width Parsing & Sizing**:
     - Added parsing of custom button widths (`-width` / `-w`) and flexible width attributes (`-flexibleWidthType`, `-flexibleWidthValue`) from Maya shelf MEL files (`parse_shelf_file`).
