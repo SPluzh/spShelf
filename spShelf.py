@@ -4137,9 +4137,9 @@ class SpShelfWindow(QtWidgets.QWidget):
 # ----------------------------------------------------------------------
 class SpShelf:
     DEFAULT_SETTINGS = {
-        "COLUMN_COUNT": 4,
+        "COLUMN_COUNT": 5,
         "ROW_SPACING": 1,
-        "BUTTON_RADIUS": 1,
+        "BUTTON_RADIUS": 3,
         "FONT_SIZE": 13,
         "SCALE_MODE": "auto",
         "CUSTOM_SCALE": 100,
