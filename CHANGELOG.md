@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.1]
+- **Filter Maya Default Popup Menu Items on Drag-and-Drop**:
+    - When dragging buttons from native Maya shelves into `spShelf`, Maya automatically injects internal right-click popup items (`Open`, `Edit`, `Edit Popup`, `Delete`, identified by `/*dSBRMBMI*/`).
+    - Added automatic filtering via `is_default_maya_menu_item()` in both `extract_maya_button_data` and `load_user_data()`:
+        - Prevents standard Maya shelf editor / shelf delete actions from cluttering `spShelf` custom context menus.
+        - Preserves user-defined custom popup items (`-mi` / `-mio`) while keeping the button's context menu focused and clean.
+
 ## [2.2.0]
 - **Option Box Popup Menus (`-mio` / `-menuItemWithOptionBox`)**:
     - Added full parsing support for shelf buttons containing `-mio` / `-menuItemWithOptionBox` flags with dual command blocks (main command and option box command).

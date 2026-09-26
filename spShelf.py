@@ -1,4 +1,6 @@
-# spShelf v2.2.0 (Pure Qt / PySide rewrite)
+# spShelf v2.2.1 (Pure Qt / PySide rewrite)
+# v2.2.1 - Filter out Maya's internal default shelf button RMB popup items (/*dSBRMBMI*/ Open, Edit, Edit Popup, Delete)
+#          when dragging buttons from native Maya shelves into spShelf.
 # v2.2.0 - Added full support for shelf buttons with Option Box menu items (-mio / -menuItemWithOptionBox):
 #          parses multi-command option box items, preserves optionBoxCommand, and provides an accessible
 #          Options submenu in the button context menu.
@@ -93,6 +95,22 @@ def sanitize_command(cmd, label=""):
 
     clean_cmd, cmd_type = extract_command_and_type(s)
     return label, clean_cmd, cmd_type
+
+
+def is_default_maya_menu_item(m_cmd, m_label=""):
+    """
+    Checks if a popup menu item is one of Autodesk Maya's internal default shelfButton items
+    (such as Open, Edit, Edit Popup, Delete) which Maya automatically creates in its native UI.
+    """
+    if not m_cmd:
+        return False
+    if "/*dSBRMBMI*/" in m_cmd:
+        return True
+    if "shelfEditorWindow" in m_cmd:
+        return True
+    if "shelfTabRefresh" in m_cmd and "deleteUI" in m_cmd:
+        return True
+    return False
 
 # ----------------------------------------------------------------------
 # Qt Imports (PySide6 for Maya 2025+, PySide2 for Maya <= 2024)
@@ -1132,13 +1150,18 @@ def extract_maya_button_data(event):
                             pass
 
                         m_cmd = cmds.menuItem(item, query=True, command=True) or ""
+                        m_label = cmds.menuItem(item, query=True, label=True) or "Item"
+
+                        # Skip Maya's default built-in shelf button RMB menu items (Open, Edit, Edit Popup, Delete)
+                        if is_default_maya_menu_item(m_cmd, m_label):
+                            continue
+
                         if is_opt_box and menu_items and m_cmd:
                             clean_opt, opt_type = extract_command_and_type(m_cmd)
                             menu_items[-1]["optionBoxCommand"] = clean_opt
                             menu_items[-1]["optionBoxSourceType"] = opt_type
                             continue
 
-                        m_label = cmds.menuItem(item, query=True, label=True) or "Item"
                         if m_cmd:
                             m_stp = "mel"
                             try:
@@ -2511,9 +2534,12 @@ class SpShelf:
                         if "doubleClickCommand" in btn and btn["doubleClickCommand"]:
                             _, clean_dc, _ = sanitize_command(btn["doubleClickCommand"])
                             btn["doubleClickCommand"] = clean_dc
+                        filtered_mis = []
                         for mi in btn.get("menuItems", []):
                             m_cmd = mi.get("command", "")
                             m_lbl = mi.get("label", "")
+                            if is_default_maya_menu_item(m_cmd, m_lbl):
+                                continue
                             if m_cmd:
                                 fixed_lbl, clean_m_cmd, m_type = sanitize_command(m_cmd, m_lbl)
                                 mi["label"] = fixed_lbl
@@ -2523,6 +2549,11 @@ class SpShelf:
                                 _, clean_opt, opt_type = sanitize_command(mi["optionBoxCommand"])
                                 mi["optionBoxCommand"] = clean_opt
                                 mi["optionBoxSourceType"] = opt_type
+                            filtered_mis.append(mi)
+                        if filtered_mis:
+                            btn["menuItems"] = filtered_mis
+                        elif "menuItems" in btn:
+                            del btn["menuItems"]
             except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
                 cmds.warning(f"Resetting corrupted JSON file: {self.user_data_file}")
                 self.save_user_data()
