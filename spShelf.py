@@ -1,4 +1,5 @@
-# spShelf v2.1.6 (Pure Qt / PySide rewrite)
+# spShelf v2.1.7 (Pure Qt / PySide rewrite)
+# v2.1.7 - Removed WindowStaysOnTopHint so dialogs (e.g. confirmDialog) appear above the shelf.
 # v2.1.6 - Added "Add Separator" option to shelf, button, and separator context menus.
 # v2.1.5 - Added native Maya shelf drag-and-drop support:
 #          MMB drag buttons from Maya standard shelves and Script Editor into spShelf.
@@ -1415,9 +1416,9 @@ class SpShelfWindow(QtWidgets.QWidget):
         hide_title_bar = self.manager.settings.get("HIDE_TITLE_BAR", False)
         if hide_title_bar:
             # Frameless Tool gives instant 0ms appearance with no Windows DWM animation
-            self.setWindowFlags(QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint | QtCore.Qt.WindowStaysOnTopHint)
+            self.setWindowFlags(QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint)
         else:
-            self.setWindowFlags(QtCore.Qt.Tool | QtCore.Qt.WindowStaysOnTopHint)
+            self.setWindowFlags(QtCore.Qt.Tool)
 
     def _apply_stylesheet(self):
         s = self.scale

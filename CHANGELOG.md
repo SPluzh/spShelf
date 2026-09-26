@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.7]
+- **Window Management/Fix**: Removed `WindowStaysOnTopHint` from `SpShelfWindow`:
+    - Fixes Maya native confirmation dialogs (`cmds.confirmDialog`) appearing underneath the shelf window when deleting buttons, separators, or shelves.
+    - Prevents the shelf window from staying on top of external applications when switching away from Maya.
+
 ## [2.1.6]
 - **UX/Context Menu**: Added "Add Separator" action to shelf context menus:
     - **Shelf Header & Background**: Right-clicking shelf headers or empty shelf grid space provides an "Add Separator" option to append or insert separators at the cursor target position.
