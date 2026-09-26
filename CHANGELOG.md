@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 ## [2.1.7]
+- **UX/Context Menu**: Added "Move Shelf Up" and "Move Shelf Down" actions to shelf context menus:
+    - Easily reorder shelves directly from shelf headers, empty shelf background, or section frame context menus.
+    - Dynamically disables options when a shelf is already at the very top or bottom.
+    - Immediately updates the UI layout and saves the new order to JSON (`move_shelf`).
+- **Settings/UI**: Increased maximum column count (buttons per row) from 20 to 30 in the Settings panel (`col_spin.setRange(1, 30)`).
 - **Window Management/Fix**: Removed `WindowStaysOnTopHint` from `SpShelfWindow`:
     - Fixes Maya native confirmation dialogs (`cmds.confirmDialog`) appearing underneath the shelf window when deleting buttons, separators, or shelves.
     - Prevents the shelf window from staying on top of external applications when switching away from Maya.

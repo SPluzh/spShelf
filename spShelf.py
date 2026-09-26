@@ -1,5 +1,5 @@
 # spShelf v2.1.7 (Pure Qt / PySide rewrite)
-# v2.1.7 - Removed WindowStaysOnTopHint so dialogs (e.g. confirmDialog) appear above the shelf.
+# v2.1.7 - Removed WindowStaysOnTopHint, added "Move Shelf Up/Down" to shelf context menus, and increased max columns to 30.
 # v2.1.6 - Added "Add Separator" option to shelf, button, and separator context menus.
 # v2.1.5 - Added native Maya shelf drag-and-drop support:
 #          MMB drag buttons from Maya standard shelves and Script Editor into spShelf.
@@ -1855,6 +1855,16 @@ class SpShelfWindow(QtWidgets.QWidget):
 
         menu.addSeparator()
 
+        move_up_action = menu.addAction("Move Shelf Up")
+        move_up_action.setEnabled(shelf_index > 0)
+        move_up_action.triggered.connect(lambda: self.manager.move_shelf(shelf_index, shelf_index - 1))
+
+        move_down_action = menu.addAction("Move Shelf Down")
+        move_down_action.setEnabled(shelf_index < len(self.manager.shelves) - 1)
+        move_down_action.triggered.connect(lambda: self.manager.move_shelf(shelf_index, shelf_index + 1))
+
+        menu.addSeparator()
+
         vis = self.manager.shelves[shelf_index].get("label_visible", True)
         label_action = menu.addAction("Hide Label" if vis else "Show Label")
         label_action.triggered.connect(lambda: self.manager.toggle_single_shelf_label(shelf_index, not vis))
@@ -1984,7 +1994,7 @@ class SpShelfWindow(QtWidgets.QWidget):
         col_lbl.setStyleSheet(f"color: #cccccc; font-size: {font_sz}px;")
         self.col_spin = QtWidgets.QSpinBox(settings_section)
         self.col_spin.setFixedHeight(btn_h)
-        self.col_spin.setRange(1, 20)
+        self.col_spin.setRange(1, 30)
         self.col_spin.setValue(self.manager.settings.get("COLUMN_COUNT", 4))
         col_layout.addWidget(col_lbl)
         col_layout.addWidget(self.col_spin)
@@ -2311,6 +2321,25 @@ class SpShelf:
                 self.save_user_data()
                 if self.window_widget:
                     self.window_widget.rebuild_content()
+
+    def move_shelf(self, source_idx, target_idx):
+        """
+        Reorders shelves by moving the shelf at source_idx to target_idx.
+        Saves updated shelf order to JSON and rebuilds the UI.
+        """
+        total = len(self.shelves)
+        if not (0 <= source_idx < total):
+            return
+        if not (0 <= target_idx < total):
+            return
+        if source_idx == target_idx:
+            return
+
+        shelf = self.shelves.pop(source_idx)
+        self.shelves.insert(target_idx, shelf)
+        self.save_user_data()
+        if self.window_widget:
+            self.window_widget.rebuild_content()
 
     def add_separator(self, shelf_idx, target_idx=None):
         """
