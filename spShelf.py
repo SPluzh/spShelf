@@ -1,4 +1,5 @@
-# spShelf v1.1.5
+# spShelf v1.1.6
+# v1.1.6 - Added option and checkbox to hide window title bar (titleBar flag).
 # v1.1.5 - Fixed shelf file search: now correctly iterates all paths in MAYA_SHELF_PATH instead of relying on Maya's broken path concatenation.
 # v1.1.4 - Added separator deletion via context menu; refined dotted style with text fallback.
 # v1.1.3 - Implemented support for separators (Standard/Dotted) and width optimization.
@@ -32,6 +33,7 @@ class SpShelf:
         "SHOW_WINDOW_UNDER_CURSOR": True, 
         "SHOW_FRAME_LABEL": True, 
         "TOOLBOX_WINDOW_STYLE": False,
+        "HIDE_TITLE_BAR": False,
         "SETTINGS_COLLAPSED": True,
         "DELETE_COLLAPSED": True,
         "SHOW_SEPARATORS": True,
@@ -51,6 +53,7 @@ class SpShelf:
         self.show_window_under_cursor_toggle = None
         self.show_frame_label_toggle = None
         self.toolbox_style_window_toggle = None
+        self.hide_title_bar_toggle = None
         self.show_separators_toggle = None
         self.horizontal_separators_toggle = None
         self.dotted_separators_toggle = None
@@ -386,6 +389,7 @@ class SpShelf:
         self.settings["SHOW_WINDOW_UNDER_CURSOR"] = cmds.checkBox(self.show_window_under_cursor_toggle, query=True, value=True)
         self.settings["SHOW_FRAME_LABEL"] = cmds.checkBox(self.show_frame_label_toggle, query=True, value=True)
         self.settings["TOOLBOX_WINDOW_STYLE"] = cmds.checkBox(self.toolbox_style_window_toggle, query=True, value=True)
+        self.settings["HIDE_TITLE_BAR"] = cmds.checkBox(self.hide_title_bar_toggle, query=True, value=True)
         self.settings["SHOW_SEPARATORS"] = cmds.checkBox(self.show_separators_toggle, query=True, value=True)
         self.settings["HORIZONTAL_SEPARATORS"] = cmds.checkBox(self.horizontal_separators_toggle, query=True, value=True)
         self.settings["DOTTED_SEPARATORS"] = cmds.checkBox(self.dotted_separators_toggle, query=True, value=True)
@@ -458,9 +462,11 @@ class SpShelf:
             
     def create_window(self):
         # retain=False prevents Maya from keeping the window in memory/hidden state after close
+        show_title_bar = not self.settings.get("HIDE_TITLE_BAR", False)
         cmds.window(self.WINDOW_NAME, title="spShelf", sizeable=True, minimizeButton=False, maximizeButton=False,
                     height=self.window_data['height'], width=self.window_data['width'], 
-                    toolbox=self.settings["TOOLBOX_WINDOW_STYLE"], retain=False)
+                    toolbox=self.settings["TOOLBOX_WINDOW_STYLE"], retain=False,
+                    titleBar=show_title_bar)
 
         main_layout = cmds.columnLayout(adjustableColumn=True, parent=self.WINDOW_NAME)
 
@@ -525,6 +531,7 @@ class SpShelf:
                                                      changeCommand=lambda x: self.toggle_frame_labels(x))
                                                      
         self.toolbox_style_window_toggle = cmds.checkBox(value=self.settings["TOOLBOX_WINDOW_STYLE"], parent=toggle_layout, label="Compact Title Bar")
+        self.hide_title_bar_toggle = cmds.checkBox(value=self.settings.get("HIDE_TITLE_BAR", False), parent=toggle_layout, label="Hide Title Bar")
         
         self.show_separators_toggle = cmds.checkBox(value=self.settings.get("SHOW_SEPARATORS", True), parent=toggle_layout, label="Show Separators")
         self.horizontal_separators_toggle = cmds.checkBox(value=self.settings.get("HORIZONTAL_SEPARATORS", False), parent=toggle_layout, label="Horizontal Separators")
