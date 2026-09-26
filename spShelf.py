@@ -1,4 +1,6 @@
-# spShelf v2.2.0 (Pure Qt / PySide rewrite)
+# spShelf v2.3.0 (Pure Qt / PySide rewrite)
+# v2.3.0 - Added floating island shelf toggle button (mel: ToggleShelf;) to the left of settings
+#          with real-time Maya shelf visibility sync and High-DPI miniature shelf icon.
 # v2.2.0 - Added compact top-right island settings button with toggleable rollout panel
 #          and integrated multi-resolution High-DPI gear icons.
 # v2.1.0 - Added DPI & System Scaling support: automatic detection from Maya/Qt/OS
@@ -172,6 +174,33 @@ def get_gear_pixmap(scale=1.0):
 
     # 4. Maya fallback icons
     for name in ["gear.png", "SP_Settings.png", "hotkeyFieldEditor.png"]:
+        pix = get_maya_pixmap(name)
+        if not pix.isNull():
+            return pix
+
+    return QtGui.QPixmap()
+
+
+def get_shelf_pixmap(scale=1.0):
+    """
+    Locates the best matching shelf icon from disk, resources, or Maya Qt resources.
+    Checks shelfTab.png, shelf.png, shelfEditor.png, etc.
+    """
+    search_dirs = [
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "icons"),
+    ]
+
+    for d in search_dirs:
+        for name in ["shelf_toggle.png", "shelfTab.png", "shelf.png"]:
+            cand = os.path.join(d, name)
+            if os.path.exists(cand):
+                pix = QtGui.QPixmap(cand)
+                if not pix.isNull():
+                    return pix
+
+    for name in ["shelfTab.png", "shelf.png", "shelfEditor.png", "shelfLayout.png"]:
         pix = get_maya_pixmap(name)
         if not pix.isNull():
             return pix
@@ -563,6 +592,135 @@ class SettingsIslandButton(QtWidgets.QToolButton):
                 painter.drawLine(QtCore.QPointF(x1, y1), QtCore.QPointF(x2, y2))
 
 
+class ShelfToggleIslandButton(QtWidgets.QToolButton):
+    """
+    Compact 'island' button located to the left of the settings button.
+    - Sized identically to SettingsIslandButton with smooth rounded-island geometry.
+    - High-DPI miniature shelf icon with procedural fallback.
+    - Toggles Maya shelf visibility via `mel: ToggleShelf;`.
+    - Real-time Maya shelf visibility sync with active teal accent when shelf is visible.
+    """
+    def __init__(self, shelf_window=None, scale=1.0, parent=None):
+        super(ShelfToggleIslandButton, self).__init__(parent)
+        self.shelf_window = shelf_window
+        self.scale = scale
+        self.setCheckable(True)
+        self.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip("Toggle Maya Shelf (mel: ToggleShelf;)")
+        self._is_hovered = False
+        self._pixmap = None
+        self._load_icon()
+        self.update_scale(scale)
+
+    def update_scale(self, scale):
+        self.scale = scale
+        btn_sz = max(16, int(round(20 * self.scale)))
+        self.setFixedSize(btn_sz, btn_sz)
+        self._load_icon()
+        self.update()
+
+    def _load_icon(self):
+        self._pixmap = get_shelf_pixmap(self.scale)
+
+    def enterEvent(self, event):
+        self._is_hovered = True
+        self.update_shelf_state()
+        self.update()
+        super(ShelfToggleIslandButton, self).enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super(ShelfToggleIslandButton, self).leaveEvent(event)
+
+    def update_shelf_state(self):
+        try:
+            vis = bool(mel.eval('isUIComponentVisible("Shelf")'))
+            self.setChecked(vis)
+            status = "Visible" if vis else "Hidden"
+            self.setToolTip(f"Toggle Maya Shelf: {status} (mel: ToggleShelf;)")
+        except Exception:
+            pass
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+
+        is_checked = self.isChecked()
+        is_down = self.isDown()
+        is_hover = self._is_hovered
+
+        if is_checked:
+            # Active (Maya shelf visible) -> Maya Teal Accent
+            bg_color = QtGui.QColor("#007363") if is_hover else QtGui.QColor("#005f52")
+            border_color = QtGui.QColor("#02a58a")
+        elif is_down:
+            bg_color = QtGui.QColor("#252525")
+            border_color = QtGui.QColor("#3d3d3d")
+        elif is_hover:
+            bg_color = QtGui.QColor("#444444")
+            border_color = QtGui.QColor("#606060")
+        else:
+            # Normal island
+            bg_color = QtGui.QColor("#333333")
+            border_color = QtGui.QColor("#484848")
+
+        rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = max(2.0, 3.0 * self.scale)
+
+        # Draw rounded island background & border
+        painter.setPen(QtGui.QPen(border_color, max(1.0, 1.0 * self.scale)))
+        painter.setBrush(QtGui.QBrush(bg_color))
+        painter.drawRoundedRect(rect, radius, radius)
+
+        # Draw shelf icon centered
+        target_icon_sz = max(10, int(round(14 * self.scale)))
+        if self._pixmap and not self._pixmap.isNull():
+            icon_rect = QtCore.QRect(0, 0, target_icon_sz, target_icon_sz)
+            icon_rect.moveCenter(self.rect().center())
+            if is_down:
+                icon_rect.adjust(1, 1, 1, 1)
+
+            scaled_pix = self._pixmap.scaled(
+                QtCore.QSize(target_icon_sz, target_icon_sz),
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation
+            )
+            painter.drawPixmap(icon_rect, scaled_pix)
+        else:
+            # Procedural Maya shelf miniature icon fallback
+            s = self.scale
+            cx = self.rect().width() / 2.0 + (1.0 if is_down else 0.0)
+            cy = self.rect().height() / 2.0 + (1.0 if is_down else 0.0)
+
+            tab_active_col = QtGui.QColor("#ffffff") if is_checked else QtGui.QColor("#00c5a5")
+            tab_inactive_col = QtGui.QColor("#004239") if is_checked else QtGui.QColor("#606060")
+            line_col = QtGui.QColor("#80cfc5") if is_checked else QtGui.QColor("#777777")
+            btn_col = QtGui.QColor("#ffffff") if is_checked else QtGui.QColor("#dcdcdc")
+
+            painter.setPen(QtCore.Qt.NoPen)
+            # Active tab
+            painter.setBrush(QtGui.QBrush(tab_active_col))
+            painter.drawRoundedRect(QtCore.QRectF(cx - 5.5 * s, cy - 5.0 * s, 5.0 * s, 2.5 * s), 0.5 * s, 0.5 * s)
+            # Inactive tab
+            painter.setBrush(QtGui.QBrush(tab_inactive_col))
+            painter.drawRoundedRect(QtCore.QRectF(cx + 0.5 * s, cy - 4.5 * s, 5.0 * s, 2.0 * s), 0.5 * s, 0.5 * s)
+            # Shelf line under tabs
+            painter.setPen(QtGui.QPen(line_col, max(0.8, 1.0 * s)))
+            painter.drawLine(QtCore.QPointF(cx - 5.5 * s, cy - 2.0 * s), QtCore.QPointF(cx + 5.5 * s, cy - 2.0 * s))
+            # 3 shelf buttons underneath
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QBrush(btn_col))
+            btn_w = 3.0 * s
+            btn_h = 3.0 * s
+            corner = max(0.4, 0.5 * s)
+            painter.drawRoundedRect(QtCore.QRectF(cx - 5.5 * s, cy, btn_w, btn_h), corner, corner)
+            painter.drawRoundedRect(QtCore.QRectF(cx - 1.5 * s, cy, btn_w, btn_h), corner, corner)
+            painter.drawRoundedRect(QtCore.QRectF(cx + 2.5 * s, cy, btn_w, btn_h), corner, corner)
+
+
 class CollapsibleSection(QtWidgets.QWidget):
     """Collapsible container representing a single Maya shelf or Settings panel."""
     def __init__(self, title, collapsed=False, label_visible=True, on_collapse_changed=None, shelf_window=None, scale=1.0, parent=None):
@@ -889,15 +1047,21 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.settings_btn.clicked.connect(self._toggle_settings)
         self.settings_btn.show()
 
+        # Floating island shelf toggle button (mel: ToggleShelf;) to the left of settings
+        self.shelf_toggle_btn = ShelfToggleIslandButton(shelf_window=self, scale=self.scale, parent=self)
+        self.shelf_toggle_btn.clicked.connect(self._toggle_shelf)
+        self.shelf_toggle_btn.show()
+
         self.rebuild_content()
 
     def _update_settings_btn_pos(self):
-        """Pins the floating island settings button to the top-right directly above shelf buttons."""
+        """Pins the floating island settings button and shelf toggle button to the top-right."""
         if not hasattr(self, "settings_btn") or not self.settings_btn:
             return
         btn_sz = self.settings_btn.width()
         root_pad = max(2, int(round(4 * self.scale)))
         pad_x = root_pad + max(2, int(round(3 * self.scale)))
+        btn_gap = max(2, int(round(3 * self.scale)))
 
         # Check if top shelf has a visible header label
         has_visible_header = False
@@ -915,6 +1079,11 @@ class SpShelfWindow(QtWidgets.QWidget):
         x = max(0, self.width() - btn_sz - pad_x)
         self.settings_btn.move(x, y)
         self.settings_btn.raise_()
+
+        if hasattr(self, "shelf_toggle_btn") and self.shelf_toggle_btn:
+            x_toggle = x - btn_sz - btn_gap
+            self.shelf_toggle_btn.move(x_toggle, y)
+            self.shelf_toggle_btn.raise_()
 
     def resizeEvent(self, event):
         super(SpShelfWindow, self).resizeEvent(event)
@@ -936,6 +1105,8 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.container_layout.setSpacing(row_gap)
 
         self.settings_btn.update_scale(self.scale)
+        if hasattr(self, "shelf_toggle_btn") and self.shelf_toggle_btn:
+            self.shelf_toggle_btn.update_scale(self.scale)
         self._apply_stylesheet()
         self.rebuild_content()
         self._update_settings_btn_pos()
@@ -1055,6 +1226,7 @@ class SpShelfWindow(QtWidgets.QWidget):
         if not settings_collapsed:
             self.settings_section.set_collapsed(False)
         self.settings_btn.setChecked(not settings_collapsed)
+        self._update_shelf_toggle_btn_state()
 
         self.container_layout.addStretch()
 
@@ -1138,6 +1310,24 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.adjust_size_to_content()
         if new_open:
             QtCore.QTimer.singleShot(20, lambda: self.scroll_area.ensureWidgetVisible(self.settings_section))
+
+    def _toggle_shelf(self):
+        log_debug("_toggle_shelf: executing ToggleShelf;")
+        try:
+            mel.eval("ToggleShelf;")
+        except Exception as e:
+            log_debug(f"_toggle_shelf error: {e}")
+        self._update_shelf_toggle_btn_state()
+        QtCore.QTimer.singleShot(50, self._update_shelf_toggle_btn_state)
+
+    def _update_shelf_toggle_btn_state(self):
+        if hasattr(self, "shelf_toggle_btn") and self.shelf_toggle_btn:
+            self.shelf_toggle_btn.update_shelf_state()
+
+    def showEvent(self, event):
+        super(SpShelfWindow, self).showEvent(event)
+        self._update_shelf_toggle_btn_state()
+        self._update_settings_btn_pos()
 
     def _on_settings_collapse_changed(self, collapsed):
         log_debug(f"_on_settings_collapse_changed: collapsed={collapsed}")

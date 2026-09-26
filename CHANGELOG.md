@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0]
+- **UI/UX**: Added a floating island button to toggle Maya's native shelves (`mel: ToggleShelf;`) positioned immediately to the left of the settings button:
+    - Sized and styled identically to the settings island button (compact ~20px with DPI scaling, rounded geometry, smooth hover/pressed states).
+    - Real-time synchronization with Maya's shelf visibility via `isUIComponentVisible("Shelf")`: displays Maya teal accent when shelves are visible, and dark gray when shelves are hidden.
+    - Integrated multi-resolution shelf icon resolution (`shelfTab.png`, `shelf.png`, etc.) with a clean procedural high-DPI miniature shelf fallback.
+    - Dynamic tooltip indicating current shelf state (`Toggle Maya Shelf: Visible/Hidden (mel: ToggleShelf;)`).
+
 ## [2.2.0]
 - **UI/UX**: Implemented the settings button as a true floating island overlay (HUD badge) positioned directly above the top shelf buttons:
     - Zero window height overhead: removed the separate window header bar, making the window as compact and clean as possible.
