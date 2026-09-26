@@ -416,8 +416,7 @@ class CollapsibleSection(QtWidgets.QWidget):
         self.scale = scale or (shelf_window.scale if shelf_window else 1.0)
 
         main_layout = QtWidgets.QVBoxLayout(self)
-        margin_bottom = max(1, int(round(2 * self.scale)))
-        main_layout.setContentsMargins(0, 0, 0, margin_bottom)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
         # Header bar
@@ -454,9 +453,8 @@ class CollapsibleSection(QtWidgets.QWidget):
         # Content container
         self.content_widget = QtWidgets.QWidget(self)
         self.content_layout = QtWidgets.QVBoxLayout(self.content_widget)
-        pad = max(1, int(round(2 * self.scale)))
-        self.content_layout.setContentsMargins(pad, pad, pad, pad)
-        self.content_layout.setSpacing(pad)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(0)
 
         main_layout.addWidget(self.header_btn)
         main_layout.addWidget(self.content_widget)
@@ -484,10 +482,20 @@ class CollapsibleSection(QtWidgets.QWidget):
         arrow = QtCore.Qt.DownArrow if not self._is_collapsed else QtCore.Qt.RightArrow
         self.header_btn.setArrowType(arrow)
 
+    def _update_margins(self, visible):
+        if visible:
+            margin_bottom = max(1, int(round(2 * self.scale)))
+            self.layout().setContentsMargins(0, 0, 0, margin_bottom)
+            self.content_layout.setContentsMargins(0, max(0, int(round(1 * self.scale))), 0, 0)
+        else:
+            self.layout().setContentsMargins(0, 0, 0, 0)
+            self.content_layout.setContentsMargins(0, 0, 0, 0)
+
     def set_label_visible(self, visible):
         if not visible and self._is_collapsed:
             self.set_collapsed(False)
         self.header_btn.setVisible(visible)
+        self._update_margins(visible)
 
     def set_collapsed(self, collapsed):
         self._is_collapsed = collapsed
@@ -712,7 +720,9 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.container = QtWidgets.QWidget()
         self.container_layout = QtWidgets.QVBoxLayout(self.container)
         self.container_layout.setContentsMargins(0, 0, 0, 0)
-        self.container_layout.setSpacing(root_pad)
+        base_row_spacing = self.manager.settings.get("ROW_SPACING", 1)
+        row_gap = max(0, int(round(base_row_spacing * self.scale)))
+        self.container_layout.setSpacing(row_gap)
 
         self.scroll_area.setWidget(self.container)
         root_layout.addWidget(self.scroll_area)
@@ -730,7 +740,9 @@ class SpShelfWindow(QtWidgets.QWidget):
         root_pad = max(2, int(round(4 * self.scale)))
         self.layout().setContentsMargins(root_pad, root_pad, root_pad, root_pad)
         self.layout().setSpacing(root_pad)
-        self.container_layout.setSpacing(root_pad)
+        base_row_spacing = self.manager.settings.get("ROW_SPACING", 1)
+        row_gap = max(0, int(round(base_row_spacing * self.scale)))
+        self.container_layout.setSpacing(row_gap)
         self._apply_stylesheet()
         self.rebuild_content()
 
@@ -783,8 +795,11 @@ class SpShelfWindow(QtWidgets.QWidget):
             )
             grid = QtWidgets.QGridLayout(grid_widget)
             grid_pad = max(1, int(round(2 * self.scale)))
-            grid.setContentsMargins(grid_pad, grid_pad, grid_pad, grid_pad)
-            grid.setSpacing(grid_pad)
+            base_row_spacing = self.manager.settings.get("ROW_SPACING", 1)
+            row_gap = max(0, int(round(base_row_spacing * self.scale)))
+            grid.setContentsMargins(grid_pad, 0, grid_pad, 0)
+            grid.setHorizontalSpacing(grid_pad)
+            grid.setVerticalSpacing(row_gap)
             grid.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
             grid.setColumnStretch(col_count, 1)
 
@@ -920,6 +935,10 @@ class SpShelfWindow(QtWidgets.QWidget):
             scale=self.scale,
             parent=self.container
         )
+        settings_pad = max(2, int(round(4 * self.scale)))
+        settings_section.content_layout.setContentsMargins(settings_pad, settings_pad, settings_pad, settings_pad)
+        settings_section.content_layout.setSpacing(settings_pad)
+        settings_section.layout().setContentsMargins(0, max(2, int(round(4 * self.scale))), 0, 0)
 
         layout = settings_section.content_layout
         btn_h = max(24, int(round(26 * self.scale)))
@@ -985,6 +1004,19 @@ class SpShelfWindow(QtWidgets.QWidget):
         col_layout.addWidget(col_lbl)
         col_layout.addWidget(self.col_spin)
         layout.addLayout(col_layout)
+
+        # Row spacing row
+        row_spacing_layout = QtWidgets.QHBoxLayout()
+        row_spacing_lbl = QtWidgets.QLabel("Row spacing:", settings_section)
+        row_spacing_lbl.setStyleSheet(f"color: #cccccc; font-size: {font_sz}px;")
+        self.row_spacing_spin = QtWidgets.QSpinBox(settings_section)
+        self.row_spacing_spin.setFixedHeight(btn_h)
+        self.row_spacing_spin.setRange(0, 30)
+        self.row_spacing_spin.setSuffix(" px")
+        self.row_spacing_spin.setValue(self.manager.settings.get("ROW_SPACING", 1))
+        row_spacing_layout.addWidget(row_spacing_lbl)
+        row_spacing_layout.addWidget(self.row_spacing_spin)
+        layout.addLayout(row_spacing_layout)
 
         # Checkboxes
         self.cb_close_repeat = QtWidgets.QCheckBox("Close on Key Release", settings_section)
@@ -1056,6 +1088,7 @@ class SpShelfWindow(QtWidgets.QWidget):
 
     def _save_settings_from_ui(self):
         self.manager.settings["COLUMN_COUNT"] = self.col_spin.value()
+        self.manager.settings["ROW_SPACING"] = self.row_spacing_spin.value()
         self.manager.settings["CLOSE_ON_REPEAT_FLAG"] = self.cb_close_repeat.isChecked()
         self.manager.settings["SHOW_WINDOW_UNDER_CURSOR"] = self.cb_under_cursor.isChecked()
         show_frame_label = self.cb_show_label.isChecked()
@@ -1128,6 +1161,7 @@ class SpShelfWindow(QtWidgets.QWidget):
 class SpShelf:
     DEFAULT_SETTINGS = {
         "COLUMN_COUNT": 4,
+        "ROW_SPACING": 1,
         "SCALE_MODE": "auto",
         "CUSTOM_SCALE": 100,
         "CLOSE_ON_REPEAT_FLAG": False,

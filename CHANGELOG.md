@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - **Fix**: Fixed "Show Frame Label" checkbox behavior. Toggling the checkbox now immediately and persistently hides or shows rollout/shelf headers, automatically uncollapses contents when hidden, and resizes the window dynamically.
 - **UI**: Centered shelf separators in their grid cells (`AlignHCenter`) and within `SeparatorWidget` (`paintEvent`), rendering them in Maya's default gray (`#606060`) rather than dark sunken edges or sticking to the left edge of the column.
 - **UX**: Enabled opening shelf context menu (Show/Hide Label, Delete Shelf) by right-clicking on empty shelf space even when header labels are hidden.
+- **UI/Settings**: Added "Row spacing" setting (0–30 px, default 1 px) with DPI scaling, allowing custom vertical gap control between shelf rows and between shelves.
 
 ## [2.1.0]
 - **DPI & System Scaling**: Added comprehensive High-DPI support:
