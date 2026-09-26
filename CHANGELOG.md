@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - **UI**: Centered button overlay labels horizontally and reduced font size for cleaner presentation and better fit.
 - **UI**: Fixed shelf button alignment. Buttons in a row are now strictly left-aligned at all times, preventing them from centering when rows are incomplete or when the window expands.
 - **Fix**: Fixed "Show Frame Label" checkbox behavior. Toggling the checkbox now immediately and persistently hides or shows rollout/shelf headers, automatically uncollapses contents when hidden, and resizes the window dynamically.
+- **UI**: Centered shelf separators in their grid cells (`AlignHCenter`) and within `SeparatorWidget` (`paintEvent`), rendering them in Maya's default gray (`#606060`) rather than dark sunken edges or sticking to the left edge of the column.
 - **UX**: Enabled opening shelf context menu (Show/Hide Label, Delete Shelf) by right-clicking on empty shelf space even when header labels are hidden.
 
 ## [2.1.0]

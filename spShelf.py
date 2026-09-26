@@ -349,6 +349,8 @@ class SeparatorWidget(QtWidgets.QFrame):
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
+        btn_sz = max(24, int(round(38 * self.scale)))
+
         if dotted:
             layout = QtWidgets.QHBoxLayout(self) if horizontal else QtWidgets.QVBoxLayout(self)
             layout.setContentsMargins(0, 0, 0, 0)
@@ -362,15 +364,38 @@ class SeparatorWidget(QtWidgets.QFrame):
                 self.setFixedHeight(max(8, int(round(12 * self.scale))))
             else:
                 self.setFixedWidth(max(6, int(round(10 * self.scale))))
+                self.setFixedHeight(btn_sz)
         else:
             if horizontal:
-                self.setFrameShape(QtWidgets.QFrame.HLine)
                 self.setFixedHeight(max(4, int(round(8 * self.scale))))
             else:
-                self.setFrameShape(QtWidgets.QFrame.VLine)
                 self.setFixedWidth(max(4, int(round(8 * self.scale))))
-            self.setFrameShadow(QtWidgets.QFrame.Sunken)
-            self.setStyleSheet("background-color: #444444;")
+                self.setFixedHeight(btn_sz)
+            self.setStyleSheet("background: transparent;")
+
+    def paintEvent(self, event):
+        if self.dotted:
+            super(SeparatorWidget, self).paintEvent(event)
+            return
+
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, False)
+        w = self.width()
+        h = self.height()
+
+        line_color = QtGui.QColor("#606060")
+        line_w = max(1, int(round(1 * self.scale)))
+        pen = QtGui.QPen(line_color, line_w)
+        painter.setPen(pen)
+
+        if self.horizontal:
+            mid_y = h // 2
+            pad_h = max(2, int(round(4 * self.scale)))
+            painter.drawLine(pad_h, mid_y, w - pad_h, mid_y)
+        else:
+            mid_x = w // 2
+            pad_v = max(2, int(round(4 * self.scale)))
+            painter.drawLine(mid_x, pad_v, mid_x, h - pad_v)
 
     def _show_context_menu(self, pos):
         if not self.shelf_manager:
@@ -789,7 +814,7 @@ class SpShelfWindow(QtWidgets.QWidget):
                         grid.addWidget(sep, cur_row, 0, 1, col_count + 1)
                         cur_row += 1
                     else:
-                        grid.addWidget(sep, cur_row, cur_col)
+                        grid.addWidget(sep, cur_row, cur_col, QtCore.Qt.AlignHCenter)
                         cur_col += 1
                         if cur_col >= col_count:
                             cur_col = 0
