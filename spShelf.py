@@ -1,4 +1,6 @@
-# spShelf v2.3.2 (Pure Qt / PySide rewrite)
+# spShelf v2.3.3 (Pure Qt / PySide rewrite)
+# v2.3.3 - Fixed separator context menu background color: properly scoped SeparatorWidget style
+#          to avoid cascading inheritance, ensuring standard Maya dark color #525252 for separator dropdown menus.
 # v2.3.2 - Set standard Maya dark color #525252 for dropdown/popup menus and added configurable FONT_SIZE setting (default 13px).
 # v2.3.1 - Fixed separator parsing when importing shelves from MEL (parse_shelf_file):
 #          separator flags are no longer captured as button properties, preventing empty buttons.
@@ -779,7 +781,8 @@ class ShelfButton(QtWidgets.QToolButton):
         super(ShelfButton, self).mouseDoubleClickEvent(event)
 
     def _show_context_menu(self, pos):
-        menu = QtWidgets.QMenu(self)
+        parent_win = self.window() if self.window() else self
+        menu = QtWidgets.QMenu(parent_win)
         menu_items = self.button_data.get("menuItems", [])
         opt_actions = []
 
@@ -859,7 +862,8 @@ class ColorPickerButton(QtWidgets.QPushButton):
     def _show_context_menu(self, pos):
         if not self.allow_reset:
             return
-        menu = QtWidgets.QMenu(self)
+        parent_win = self.window() if self.window() else self
+        menu = QtWidgets.QMenu(parent_win)
         reset_action = menu.addAction("Reset / Clear Color")
         reset_action.triggered.connect(lambda: self.set_normalized_rgb(self.default_color, emit=True))
         menu.exec_(self.mapToGlobal(pos))
@@ -2063,7 +2067,7 @@ class SeparatorWidget(QtWidgets.QFrame):
             else:
                 self.setFixedWidth(max(4, int(round(8 * self.scale))))
                 self.setFixedHeight(btn_sz)
-            self.setStyleSheet("background: transparent;")
+        self.setStyleSheet("SeparatorWidget { background: transparent; border: none; }")
 
     def paintEvent(self, event):
         if self.dotted:
@@ -2143,7 +2147,8 @@ class SeparatorWidget(QtWidgets.QFrame):
     def _show_context_menu(self, pos):
         if not self.shelf_manager:
             return
-        menu = QtWidgets.QMenu(self)
+        parent_win = self.window() if self.window() else self
+        menu = QtWidgets.QMenu(parent_win)
         add_sep_action = menu.addAction("Add Separator")
         add_sep_action.triggered.connect(lambda: self.shelf_manager.add_separator(self.shelf_index, self.item_index + 1))
         menu.addSeparator()
@@ -3576,7 +3581,8 @@ class SpShelfWindow(QtWidgets.QWidget):
 
     def _show_shelf_header_menu(self, pos, shelf_index, section, parent_widget=None):
         target = parent_widget or section.header_btn
-        menu = QtWidgets.QMenu(target)
+        parent_win = self.window() if hasattr(self, "window") and self.window() else self
+        menu = QtWidgets.QMenu(parent_win)
 
         target_idx = None
         if isinstance(target, ShelfGridWidget):

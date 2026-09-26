@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.3]
+- **Fixed Separator Dropdown Menu Background Color (`#525252`)**:
+    - Fixed an issue where the right-click context menu of shelf separators inherited an un-scoped `background: transparent;` stylesheet rule from `SeparatorWidget`, causing separator menus to render with a black/transparent background instead of Maya's standard dark tone `#525252`.
+    - Scoped `SeparatorWidget` stylesheet rules (`SeparatorWidget { background: transparent; border: none; }`) and parented separator, button, and header popup menus directly to the main window to guarantee consistent `#525252` background and font scaling across all context menus.
+
 ## [2.3.2]
 - **Standard Maya Dark Menu Theme Color (`#525252`) & Configurable Base Font Size Setting**:
     - Updated background color of all dropdown and popup menus to Maya's native menu tone `#525252` (`QMenu` and `QComboBox QAbstractItemView`).
