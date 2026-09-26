@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0]
+- **UI/UX**: Implemented the settings button as a true floating island overlay (HUD badge) positioned directly above the top shelf buttons:
+    - Zero window height overhead: removed the separate window header bar, making the window as compact and clean as possible.
+    - Sized to half of regular shelf buttons (~20px with DPI scaling) with rounded island geometry and smooth hover/pressed highlights.
+    - Seamless alignment: when shelf labels are visible, it floats right inside the upper shelf header; when labels are hidden, it floats in the top-right corner directly over the buttons.
+    - Active Maya teal accent indicator when the settings rollout is open.
+    - Integrated multi-resolution High-DPI gear icons (`gear_14.png`, `gear_19.png`, `gear_24.png`, `gear_28.png`, `gear_38.png`) with automatic scale selection.
+- **UI**: Cleaned up the window appearance by hiding the bottom Settings rollout when collapsed, eliminating bulky bottom bars and keeping the shelf view minimal and focused.
+- **UX**: Toggling the floating settings button smoothly unfolds or closes the settings rollout panel with dynamic window height resizing and boundary clamping.
+- **UX**: Added frameless window dragging support by clicking and dragging on empty window areas or shelf headers.
+
 ## [2.1.1]
 - **Fix**: Fixed shelf buttons remaining in dark/pressed state after being clicked. Properly dispatched mouse release and double-click events to base Qt handler and ensured `isDown` state resets immediately.
 - **UI**: Set shelf button default background to transparent (matching Maya's default shelf buttons) with clean hover and pressed state highlights.

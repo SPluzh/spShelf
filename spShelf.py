@@ -1,4 +1,6 @@
-# spShelf v2.1.0 (Pure Qt / PySide rewrite)
+# spShelf v2.2.0 (Pure Qt / PySide rewrite)
+# v2.2.0 - Added compact top-right island settings button with toggleable rollout panel
+#          and integrated multi-resolution High-DPI gear icons.
 # v2.1.0 - Added DPI & System Scaling support: automatic detection from Maya/Qt/OS
 #          and manual scale override in Settings (75% - 300% / Custom).
 # v2.0.0 - Full rewrite to native Qt (PySide2/PySide6) for instantaneous opening (0-2ms),
@@ -11,6 +13,7 @@ import os
 import sys
 import json
 import time
+import math
 import maya.cmds as cmds
 import maya.mel as mel
 
@@ -124,6 +127,56 @@ def get_maya_pixmap(icon_name):
         return icon.pixmap(QtCore.QSize(128, 128))
 
     return QtGui.QPixmap(":/commandButton.png")
+
+
+def get_gear_pixmap(scale=1.0):
+    """
+    Locates the best matching high-DPI gear icon from disk, resources, or Maya.
+    Checks gear_{14, 19, 24, 28, 38}.png based on scaled target size.
+    """
+    target_sz = max(10, int(round(14 * scale)))
+    presets = [14, 19, 24, 28, 38]
+    best_preset = min(presets, key=lambda s: abs(s - target_sz))
+
+    search_dirs = [
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "icons"),
+    ]
+
+    # 1. Check exact or closest preset
+    for d in search_dirs:
+        cand = os.path.join(d, f"gear_{best_preset}.png")
+        if os.path.exists(cand):
+            pix = QtGui.QPixmap(cand)
+            if not pix.isNull():
+                return pix
+
+    # 2. Try largest available for high quality downscaling
+    for d in search_dirs:
+        for p in reversed(presets):
+            cand = os.path.join(d, f"gear_{p}.png")
+            if os.path.exists(cand):
+                pix = QtGui.QPixmap(cand)
+                if not pix.isNull():
+                    return pix
+
+    # 3. Direct gear.png or settings.png in search directories
+    for d in search_dirs:
+        for name in ["gear.png", "settings.png", "gear_icon.png"]:
+            cand = os.path.join(d, name)
+            if os.path.exists(cand):
+                pix = QtGui.QPixmap(cand)
+                if not pix.isNull():
+                    return pix
+
+    # 4. Maya fallback icons
+    for name in ["gear.png", "SP_Settings.png", "hotkeyFieldEditor.png"]:
+        pix = get_maya_pixmap(name)
+        if not pix.isNull():
+            return pix
+
+    return QtGui.QPixmap()
 
 
 def get_system_scale(screen=None):
@@ -404,6 +457,110 @@ class SeparatorWidget(QtWidgets.QFrame):
         del_action = menu.addAction("Delete Separator")
         del_action.triggered.connect(lambda: self.shelf_manager.confirm_and_delete_button(self.shelf_index, self.item_index))
         menu.exec_(self.mapToGlobal(pos))
+
+
+class SettingsIslandButton(QtWidgets.QToolButton):
+    """
+    Compact 'island' settings button located at the top-right of the window.
+    - Half the size of regular shelf buttons.
+    - Smooth rounded-island geometry.
+    - High-DPI gear icon rendering bypassing Maya QStyle raster clamping.
+    - Supports normal, hover, pressed, and checked (active rollout) states.
+    """
+    def __init__(self, shelf_window=None, scale=1.0, parent=None):
+        super(SettingsIslandButton, self).__init__(parent)
+        self.shelf_window = shelf_window
+        self.scale = scale
+        self.setCheckable(True)
+        self.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip("Settings")
+        self._is_hovered = False
+        self._pixmap = None
+        self._load_icon()
+        self.update_scale(scale)
+
+    def update_scale(self, scale):
+        self.scale = scale
+        btn_sz = max(16, int(round(20 * self.scale)))
+        self.setFixedSize(btn_sz, btn_sz)
+        self._load_icon()
+        self.update()
+
+    def _load_icon(self):
+        self._pixmap = get_gear_pixmap(self.scale)
+
+    def enterEvent(self, event):
+        self._is_hovered = True
+        self.update()
+        super(SettingsIslandButton, self).enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super(SettingsIslandButton, self).leaveEvent(event)
+
+    def paintEvent(self, event):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+
+        is_checked = self.isChecked()
+        is_down = self.isDown()
+        is_hover = self._is_hovered
+
+        if is_checked:
+            # Active (rollout open) -> Maya Teal Accent
+            bg_color = QtGui.QColor("#007363") if is_hover else QtGui.QColor("#005f52")
+            border_color = QtGui.QColor("#02a58a")
+        elif is_down:
+            bg_color = QtGui.QColor("#252525")
+            border_color = QtGui.QColor("#3d3d3d")
+        elif is_hover:
+            bg_color = QtGui.QColor("#444444")
+            border_color = QtGui.QColor("#606060")
+        else:
+            # Normal island
+            bg_color = QtGui.QColor("#333333")
+            border_color = QtGui.QColor("#484848")
+
+        rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = max(2.0, 3.0 * self.scale)
+
+        # Draw rounded island background & border
+        painter.setPen(QtGui.QPen(border_color, max(1.0, 1.0 * self.scale)))
+        painter.setBrush(QtGui.QBrush(bg_color))
+        painter.drawRoundedRect(rect, radius, radius)
+
+        # Draw gear icon centered
+        target_icon_sz = max(10, int(round(14 * self.scale)))
+        if self._pixmap and not self._pixmap.isNull():
+            icon_rect = QtCore.QRect(0, 0, target_icon_sz, target_icon_sz)
+            icon_rect.moveCenter(self.rect().center())
+            if is_down:
+                icon_rect.adjust(1, 1, 1, 1)
+
+            scaled_pix = self._pixmap.scaled(
+                QtCore.QSize(target_icon_sz, target_icon_sz),
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation
+            )
+            painter.drawPixmap(icon_rect, scaled_pix)
+        else:
+            # Procedural gear icon fallback
+            painter.setPen(QtGui.QPen(QtGui.QColor(220, 220, 220), max(1.0, 1.2 * self.scale)))
+            painter.setBrush(QtCore.Qt.NoBrush)
+            r = target_icon_sz / 2.0
+            cx = self.rect().width() / 2.0 + (1.0 if is_down else 0.0)
+            cy = self.rect().height() / 2.0 + (1.0 if is_down else 0.0)
+            painter.drawEllipse(QtCore.QPointF(cx, cy), r * 0.55, r * 0.55)
+            for deg in range(0, 360, 60):
+                rad = math.radians(deg)
+                x1 = cx + math.cos(rad) * (r * 0.45)
+                y1 = cy + math.sin(rad) * (r * 0.45)
+                x2 = cx + math.cos(rad) * (r * 0.85)
+                y2 = cy + math.sin(rad) * (r * 0.85)
+                painter.drawLine(QtCore.QPointF(x1, y1), QtCore.QPointF(x2, y2))
 
 
 class CollapsibleSection(QtWidgets.QWidget):
@@ -727,7 +884,41 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.scroll_area.setWidget(self.container)
         root_layout.addWidget(self.scroll_area)
 
+        # True floating island settings button directly above shelf buttons
+        self.settings_btn = SettingsIslandButton(shelf_window=self, scale=self.scale, parent=self)
+        self.settings_btn.clicked.connect(self._toggle_settings)
+        self.settings_btn.show()
+
         self.rebuild_content()
+
+    def _update_settings_btn_pos(self):
+        """Pins the floating island settings button to the top-right directly above shelf buttons."""
+        if not hasattr(self, "settings_btn") or not self.settings_btn:
+            return
+        btn_sz = self.settings_btn.width()
+        root_pad = max(2, int(round(4 * self.scale)))
+        pad_x = root_pad + max(2, int(round(3 * self.scale)))
+
+        # Check if top shelf has a visible header label
+        has_visible_header = False
+        if self.manager.shelves:
+            first_shelf = self.manager.shelves[0]
+            global_label_vis = self.manager.settings.get("SHOW_FRAME_LABEL", True)
+            has_visible_header = first_shelf.get("label_visible", global_label_vis)
+
+        if has_visible_header:
+            header_h = max(20, int(round(22 * self.scale)))
+            y = root_pad + (header_h - btn_sz) // 2
+        else:
+            y = root_pad + max(1, int(round(2 * self.scale)))
+
+        x = max(0, self.width() - btn_sz - pad_x)
+        self.settings_btn.move(x, y)
+        self.settings_btn.raise_()
+
+    def resizeEvent(self, event):
+        super(SpShelfWindow, self).resizeEvent(event)
+        self._update_settings_btn_pos()
 
     def update_scale(self, new_scale=None):
         """Updates the scale factor and refreshes styling and layouts."""
@@ -743,8 +934,11 @@ class SpShelfWindow(QtWidgets.QWidget):
         base_row_spacing = self.manager.settings.get("ROW_SPACING", 1)
         row_gap = max(0, int(round(base_row_spacing * self.scale)))
         self.container_layout.setSpacing(row_gap)
+
+        self.settings_btn.update_scale(self.scale)
         self._apply_stylesheet()
         self.rebuild_content()
+        self._update_settings_btn_pos()
 
     def rebuild_content(self):
         """Clears and re-populates shelves and settings widgets."""
@@ -854,6 +1048,14 @@ class SpShelfWindow(QtWidgets.QWidget):
 
         # Settings Section
         self._build_settings_section()
+        settings_collapsed = self.manager.settings.get("SETTINGS_COLLAPSED", True)
+        if not self.manager.shelves:
+            settings_collapsed = False
+        self.settings_section.setVisible(not settings_collapsed)
+        if not settings_collapsed:
+            self.settings_section.set_collapsed(False)
+        self.settings_btn.setChecked(not settings_collapsed)
+
         self.container_layout.addStretch()
 
         self.adjust_size_to_content()
@@ -910,6 +1112,7 @@ class SpShelfWindow(QtWidgets.QWidget):
 
         log_debug(f"_do_adjust_size: calling self.resize({target_w}, {target_h})")
         self.resize(target_w, target_h)
+        self._update_settings_btn_pos()
         log_debug(f"_do_adjust_size: END. Result win size={self.width()}x{self.height()}")
 
     def _show_shelf_header_menu(self, pos, shelf_index, section, parent_widget=None):
@@ -924,17 +1127,44 @@ class SpShelfWindow(QtWidgets.QWidget):
 
         menu.exec_(target.mapToGlobal(pos))
 
+    def _toggle_settings(self):
+        new_open = not self.settings_section.isVisible()
+        log_debug(f"_toggle_settings: new_open={new_open}")
+        self.settings_section.setVisible(new_open)
+        if new_open:
+            self.settings_section.set_collapsed(False)
+        self.settings_btn.setChecked(new_open)
+        self.manager.on_settings_collapse("SETTINGS_COLLAPSED", not new_open)
+        self.adjust_size_to_content()
+        if new_open:
+            QtCore.QTimer.singleShot(20, lambda: self.scroll_area.ensureWidgetVisible(self.settings_section))
+
+    def _on_settings_collapse_changed(self, collapsed):
+        log_debug(f"_on_settings_collapse_changed: collapsed={collapsed}")
+        self.manager.on_settings_collapse("SETTINGS_COLLAPSED", collapsed)
+        if collapsed:
+            self.settings_section.setVisible(False)
+            self.settings_btn.setChecked(False)
+        else:
+            self.settings_section.setVisible(True)
+            self.settings_btn.setChecked(True)
+        self.adjust_size_to_content()
+
     def _build_settings_section(self):
         settings_collapsed = self.manager.settings.get("SETTINGS_COLLAPSED", True)
-        settings_section = CollapsibleSection(
+        if not self.manager.shelves:
+            settings_collapsed = False
+
+        self.settings_section = CollapsibleSection(
             title="Settings",
             collapsed=settings_collapsed,
             label_visible=True,
-            on_collapse_changed=lambda col: self.manager.on_settings_collapse("SETTINGS_COLLAPSED", col),
+            on_collapse_changed=self._on_settings_collapse_changed,
             shelf_window=self,
             scale=self.scale,
             parent=self.container
         )
+        settings_section = self.settings_section
         settings_pad = max(2, int(round(4 * self.scale)))
         settings_section.content_layout.setContentsMargins(settings_pad, settings_pad, settings_pad, settings_pad)
         settings_section.content_layout.setSpacing(settings_pad)
@@ -1085,6 +1315,7 @@ class SpShelfWindow(QtWidgets.QWidget):
             except Exception:
                 pass
         self.adjust_size_to_content()
+        self._update_settings_btn_pos()
 
     def _save_settings_from_ui(self):
         self.manager.settings["COLUMN_COUNT"] = self.col_spin.value()
@@ -1153,6 +1384,26 @@ class SpShelfWindow(QtWidgets.QWidget):
         target_y = max(screen_geo.top(), min(target_y, screen_geo.bottom() - h))
 
         self.move(target_x, target_y)
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+            self._drag_pos = pos - self.frameGeometry().topLeft()
+            event.accept()
+        else:
+            super(SpShelfWindow, self).mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == QtCore.Qt.LeftButton and getattr(self, "_drag_pos", None) is not None:
+            pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+            self.move(pos - self._drag_pos)
+            event.accept()
+        else:
+            super(SpShelfWindow, self).mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        super(SpShelfWindow, self).mouseReleaseEvent(event)
 
 
 # ----------------------------------------------------------------------
