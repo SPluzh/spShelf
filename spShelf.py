@@ -1,4 +1,7 @@
-# spShelf v2.1.9 (Pure Qt / PySide rewrite)
+# spShelf v2.2.0 (Pure Qt / PySide rewrite)
+# v2.2.0 - Added full support for shelf buttons with Option Box menu items (-mio / -menuItemWithOptionBox):
+#          parses multi-command option box items, preserves optionBoxCommand, and provides an accessible
+#          Options submenu in the button context menu.
 # v2.1.9 - Fixed parsing of popup menu items (-mi) containing parentheses in labels,
 #          added auto-unwrapping and native execution for Python commands wrapped in MEL python("..."),
 #          and added dedicated per-item sourceType support and automatic self-healing for corrupted commands.
@@ -628,6 +631,8 @@ class ShelfButton(QtWidgets.QToolButton):
     def _show_context_menu(self, pos):
         menu = QtWidgets.QMenu(self)
         menu_items = self.button_data.get("menuItems", [])
+        opt_actions = []
+
         for item in menu_items:
             label = item.get("label", "Unnamed")
             cmd = item.get("command", "")
@@ -637,6 +642,20 @@ class ShelfButton(QtWidgets.QToolButton):
                 item_source_type = detected_type if detected_type == "python" else self.source_type
             action = menu.addAction(label)
             action.triggered.connect(lambda checked=False, c=cmd, t=item_source_type: self.shelf_manager.execute_command(c, t))
+
+            opt_cmd = item.get("optionBoxCommand", "")
+            if opt_cmd:
+                opt_type = item.get("optionBoxSourceType")
+                if not opt_type:
+                    _, d_type = extract_command_and_type(opt_cmd)
+                    opt_type = d_type if d_type == "python" else self.source_type
+                opt_actions.append((label, opt_cmd, opt_type))
+
+        if opt_actions:
+            opt_menu = menu.addMenu(get_maya_icon("menuIconOptions.png"), "Options")
+            for o_lbl, o_cmd, o_type in opt_actions:
+                o_action = opt_menu.addAction(get_maya_icon("menuIconOptions.png"), f"{o_lbl} Options")
+                o_action.triggered.connect(lambda checked=False, c=o_cmd, t=o_type: self.shelf_manager.execute_command(c, t))
 
         if menu_items:
             menu.addSeparator()
@@ -1106,8 +1125,20 @@ def extract_maya_button_data(event):
                 items = cmds.popupMenu(p, query=True, itemArray=True) or []
                 for item in items:
                     try:
-                        m_label = cmds.menuItem(item, query=True, label=True) or "Item"
+                        is_opt_box = False
+                        try:
+                            is_opt_box = cmds.menuItem(item, query=True, optionBox=True)
+                        except Exception:
+                            pass
+
                         m_cmd = cmds.menuItem(item, query=True, command=True) or ""
+                        if is_opt_box and menu_items and m_cmd:
+                            clean_opt, opt_type = extract_command_and_type(m_cmd)
+                            menu_items[-1]["optionBoxCommand"] = clean_opt
+                            menu_items[-1]["optionBoxSourceType"] = opt_type
+                            continue
+
+                        m_label = cmds.menuItem(item, query=True, label=True) or "Item"
                         if m_cmd:
                             m_stp = "mel"
                             try:
@@ -2488,6 +2519,10 @@ class SpShelf:
                                 mi["label"] = fixed_lbl
                                 mi["command"] = clean_m_cmd
                                 mi["sourceType"] = m_type
+                            if "optionBoxCommand" in mi and mi["optionBoxCommand"]:
+                                _, clean_opt, opt_type = sanitize_command(mi["optionBoxCommand"])
+                                mi["optionBoxCommand"] = clean_opt
+                                mi["optionBoxSourceType"] = opt_type
             except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
                 cmds.warning(f"Resetting corrupted JSON file: {self.user_data_file}")
                 self.save_user_data()
@@ -2827,7 +2862,23 @@ class SpShelf:
                         button_data["_parsedBackgroundColor"] = vals[:3]
                 except Exception:
                     pass
-            elif re.search(r'-m(?:i|enuItem)\s+"', line):
+            elif re.search(r'-m(?:io?|enuItem(?:WithOptionBox)?)\s+"', line):
+                # 1. First parse any -mio / -menuItemWithOptionBox matches
+                for m in re.finditer(r'-m(?:io|enuItemWithOptionBox)\s+"((?:\\.|[^"\\])*)"\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)', line):
+                    raw_label = m.group(1)
+                    raw_cmd = m.group(2)
+                    raw_opt = m.group(3)
+                    label = raw_label.replace(r'\"', '"').replace(r'\\', '\\')
+                    clean_cmd, cmd_type = extract_command_and_type(raw_cmd.replace(r'\"', '"').replace(r'\\', '\\'))
+                    clean_opt, opt_type = extract_command_and_type(raw_opt.replace(r'\"', '"').replace(r'\\', '\\'))
+                    button_data.setdefault("menuItems", []).append({
+                        "label": label,
+                        "command": clean_cmd,
+                        "sourceType": cmd_type,
+                        "optionBoxCommand": clean_opt,
+                        "optionBoxSourceType": opt_type
+                    })
+                # 2. Parse standard -mi / -menuItem matches
                 for m in re.finditer(r'-m(?:i|enuItem)\s+"((?:\\.|[^"\\])*)"\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)', line):
                     raw_label = m.group(1)
                     raw_cmd = m.group(2)

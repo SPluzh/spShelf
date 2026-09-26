@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.0]
+- **Option Box Popup Menus (`-mio` / `-menuItemWithOptionBox`)**:
+    - Added full parsing support for shelf buttons containing `-mio` / `-menuItemWithOptionBox` flags with dual command blocks (main command and option box command).
+    - Preserves both `command` and `optionBoxCommand` with their respective `sourceType` (MEL / Python).
+    - **Context Menu Options Submenu**: When right-clicking a button with option box items, items are listed directly for single-click execution, and an organized `Options ▶` submenu provides direct access to all associated options dialogs.
+    - **Native Maya Shelf Drag-and-Drop**: Automatically detects and pairs option box items (`optionBox=True`) when dragging buttons from Maya native shelves into `spShelf`.
+
 ## [2.1.9]
 - **Bug Fix / Popup Menu Items (`-mi`) with Parentheses**:
     - Replaced fragile `split("(", 1)` parsing with robust regular expressions matching `-mi` and `-menuItem`.
