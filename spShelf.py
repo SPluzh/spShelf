@@ -1,4 +1,6 @@
-# spShelf v2.2.2 (Pure Qt / PySide rewrite)
+# spShelf v2.2.3 (Pure Qt / PySide rewrite)
+# v2.2.3 - Fixed multi-row shelf separator sizing: separators now always maintain compact width
+#          and do not expand to button width or consume button column slots when shelves wrap across multiple rows.
 # v2.2.2 - Added white triangle indicator in the bottom-right corner for shelf buttons
 #          with custom drop-down / popup menu items, matching native Maya shelf behavior.
 # v2.2.1 - Filter out Maya's internal default shelf button RMB popup items (/*dSBRMBMI*/ Open, Edit, Edit Popup, Delete)
@@ -1513,8 +1515,10 @@ class CollapsibleSection(QtWidgets.QWidget):
 
 class ShelfGridWidget(QtWidgets.QWidget):
     """
-    Grid container for shelf items with support for Middle Mouse Button Drag & Drop.
+    Container for shelf items with support for Middle Mouse Button Drag & Drop.
     Calculates dynamic drop insertion slot and renders high-contrast accent drop indicator.
+    Uses independent horizontal row layouts to ensure separators maintain their compact size
+    without expanding to button dimensions across multi-row shelves.
     """
     def __init__(self, shelf_index, shelf_window, manager, scale=1.0, col_count=4, parent=None):
         super(ShelfGridWidget, self).__init__(parent)
@@ -1527,22 +1531,37 @@ class ShelfGridWidget(QtWidgets.QWidget):
         self._drop_indicator = None
 
         self.setAcceptDrops(True)
-        self.grid = QtWidgets.QGridLayout(self)
-        grid_pad = max(1, int(round(2 * self.scale)))
+        self.main_layout = QtWidgets.QVBoxLayout(self)
+        self.grid_pad = max(1, int(round(2 * self.scale)))
         base_row_spacing = self.manager.settings.get("ROW_SPACING", 1)
-        row_gap = max(0, int(round(base_row_spacing * self.scale)))
-        self.grid.setContentsMargins(grid_pad, 0, grid_pad, 0)
-        self.grid.setHorizontalSpacing(grid_pad)
-        self.grid.setVerticalSpacing(row_gap)
-        self.grid.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
-        self.grid.setColumnStretch(col_count, 1)
+        self.row_gap = max(0, int(round(base_row_spacing * self.scale)))
+        self.main_layout.setContentsMargins(self.grid_pad, 0, self.grid_pad, 0)
+        self.main_layout.setSpacing(self.row_gap)
+        self.main_layout.setAlignment(QtCore.Qt.AlignTop)
 
-    def add_shelf_item(self, widget, row, col, row_span=1, col_span=1, alignment=None):
-        if alignment is not None:
-            self.grid.addWidget(widget, row, col, row_span, col_span, alignment)
-        else:
-            self.grid.addWidget(widget, row, col, row_span, col_span)
+        self.row_layouts = {}
+
+    def horizontalSpacing(self):
+        return self.grid_pad
+
+    def verticalSpacing(self):
+        return self.row_gap
+
+    def add_shelf_item(self, widget, row, col=0, row_span=1, col_span=1, alignment=None):
         self.items.append(widget)
+        is_horiz = getattr(widget, "horizontal", False)
+
+        if is_horiz:
+            self.main_layout.addWidget(widget)
+        else:
+            if row not in self.row_layouts:
+                row_layout = QtWidgets.QHBoxLayout()
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(self.grid_pad)
+                row_layout.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                self.main_layout.addLayout(row_layout)
+                self.row_layouts[row] = row_layout
+            self.row_layouts[row].addWidget(widget)
 
     def _calculate_target_slot(self, pos):
         """
@@ -1590,7 +1609,7 @@ class ShelfGridWidget(QtWidgets.QWidget):
             rect = QtCore.QRect(geo.left(), y, geo.width(), thickness)
             return target_idx, rect, True
         else:
-            spacing = self.grid.horizontalSpacing()
+            spacing = self.grid_pad
             if px < geo.center().x():
                 target_idx = item_idx
                 x = geo.left() - (spacing + thickness) // 2
@@ -2080,14 +2099,11 @@ class SpShelfWindow(QtWidgets.QWidget):
                         if cur_col > 0:
                             cur_row += 1
                             cur_col = 0
-                        grid_widget.add_shelf_item(sep, cur_row, 0, 1, col_count + 1)
+                        grid_widget.add_shelf_item(sep, cur_row, 0)
                         cur_row += 1
+                        cur_col = 0
                     else:
-                        grid_widget.add_shelf_item(sep, cur_row, cur_col, alignment=QtCore.Qt.AlignHCenter)
-                        cur_col += 1
-                        if cur_col >= col_count:
-                            cur_col = 0
-                            cur_row += 1
+                        grid_widget.add_shelf_item(sep, cur_row, cur_col)
                 else:
                     btn = ShelfButton(
                         button_data=b,
@@ -2097,11 +2113,11 @@ class SpShelfWindow(QtWidgets.QWidget):
                         scale=self.scale,
                         parent=grid_widget
                     )
-                    grid_widget.add_shelf_item(btn, cur_row, cur_col)
-                    cur_col += 1
                     if cur_col >= col_count:
                         cur_col = 0
                         cur_row += 1
+                    grid_widget.add_shelf_item(btn, cur_row, cur_col)
+                    cur_col += 1
 
             section.content_layout.addWidget(grid_widget)
             self.container_layout.addWidget(section)

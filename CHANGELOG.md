@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.3]
+- **Multi-Row Shelf Separator Sizing**:
+    - Fixed an issue where separators expanded to the width of full shelf buttons (38px) when a shelf wrapped across multiple rows.
+    - Shelf rows are now laid out using independent row layouts, ensuring vertical separators always stay compact (8px / 10px dotted) regardless of how many rows the shelf has.
+    - Vertical separators no longer consume button column slots, ensuring shelves consistently hold `COLUMN_COUNT` buttons per row.
+
+## [2.2.2]
+- **Popup Menu Triangle Indicator**:
+    - Added a white triangle indicator in the bottom-right corner of buttons that have custom RMB popup menu items, matching Maya's native shelf visual style.
+
 ## [2.2.1]
 - **Filter Maya Default Popup Menu Items on Drag-and-Drop**:
     - When dragging buttons from native Maya shelves into `spShelf`, Maya automatically injects internal right-click popup items (`Open`, `Edit`, `Edit Popup`, `Delete`, identified by `/*dSBRMBMI*/`).
