@@ -555,19 +555,20 @@ class SpShelfWindow(QtWidgets.QWidget):
                 background: transparent;
                 border: none;
             }}
-            QToolButton, ShelfButton {{
-                background-color: #333333;
-                border: 1px solid #424242;
+            ShelfButton, QToolButton {{
+                background-color: transparent;
+                border: 1px solid transparent;
                 border-radius: {radius_md}px;
                 padding: 0px;
                 margin: 0px;
             }}
-            QToolButton:hover, ShelfButton:hover {{
-                background-color: #4a4a4a;
-                border-color: #606060;
+            ShelfButton:hover, QToolButton:hover {{
+                background-color: #444444;
+                border: 1px solid #606060;
             }}
-            QToolButton:pressed, ShelfButton:pressed {{
+            ShelfButton:pressed, QToolButton:pressed {{
                 background-color: #1f1f1f;
+                border: 1px solid #333333;
                 padding: 1px 0px 0px 1px;
             }}
             QCheckBox {{
