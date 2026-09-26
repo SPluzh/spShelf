@@ -1,4 +1,7 @@
-# spShelf v2.1.8 (Pure Qt / PySide rewrite)
+# spShelf v2.1.9 (Pure Qt / PySide rewrite)
+# v2.1.9 - Fixed parsing of popup menu items (-mi) containing parentheses in labels,
+#          added auto-unwrapping and native execution for Python commands wrapped in MEL python("..."),
+#          and added dedicated per-item sourceType support and automatic self-healing for corrupted commands.
 # v2.1.8 - Added reading and rendering of label color, label background, background transparency, and button background (if set).
 # v2.1.7 - Removed WindowStaysOnTopHint, added "Move Shelf Up/Down" to shelf context menus, and increased max columns to 30.
 # v2.1.6 - Added "Add Separator" option to shelf, button, and separator context menus.
@@ -24,8 +27,69 @@ import sys
 import json
 import time
 import math
+import re
 import maya.cmds as cmds
 import maya.mel as mel
+
+
+def extract_command_and_type(cmd_str):
+    """
+    Analyzes a command string and detects whether it is Python or MEL.
+    Unwraps Python code if embedded inside MEL's python(...) syntax:
+      e.g. python("import foo; foo.bar()") -> ('import foo; foo.bar()', 'python')
+    """
+    if not isinstance(cmd_str, str):
+        return cmd_str, "mel"
+    s = cmd_str.strip()
+    if r'\"' in s:
+        s = s.replace(r'\"', '"')
+    if r'\\' in s:
+        s = s.replace(r'\\', '\\')
+
+    # Remove outer quotes if wrapped like "python(...)"
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1].strip()
+
+    if (s.startswith('python("') and s.endswith('")')) or (s.startswith("python('") and s.endswith("')")):
+        inner = s[8:-2].strip()
+        inner = inner.replace(r'\"', '"').replace(r"\'", "'")
+        return inner, "python"
+    elif s.startswith("python(") and s.endswith(")"):
+        inner = s[7:-1].strip()
+        if (inner.startswith('"') and inner.endswith('"')) or (inner.startswith("'") and inner.endswith("'")):
+            inner = inner[1:-1].strip()
+            inner = inner.replace(r'\"', '"').replace(r"\'", "'")
+            return inner, "python"
+    return s, "mel"
+
+
+def sanitize_command(cmd, label=""):
+    """
+    Cleans up command strings and repairs corrupted items caused by previous
+    regex or split bugs (such as labels with parentheses bleeding into commands:
+    e.g. 'Selected Only)" ( "python(...)').
+    Returns (label, clean_command, source_type).
+    """
+    if not isinstance(cmd, str):
+        return label, cmd, "mel"
+    s = cmd.strip()
+    if ')"' in s and '("' in s:
+        parts = s.split(')"', 1)
+        trailing_label = parts[0].strip()
+        after = parts[1].strip()
+        m = re.search(r'\(\s*["\']?([\s\S]*)', after)
+        if m:
+            inner = m.group(1).strip()
+            if inner.endswith('")') and not inner.startswith('python("'):
+                inner = inner[:-2].strip()
+            elif inner.endswith('"') and not (inner.startswith('"') and len(inner) > 1):
+                inner = inner[:-1].strip()
+            new_label = f"{label.rstrip()} ({trailing_label})".strip() if trailing_label and label else label
+            clean_cmd, cmd_type = extract_command_and_type(inner)
+            return new_label, clean_cmd, cmd_type
+
+    clean_cmd, cmd_type = extract_command_and_type(s)
+    return label, clean_cmd, cmd_type
 
 # ----------------------------------------------------------------------
 # Qt Imports (PySide6 for Maya 2025+, PySide2 for Maya <= 2024)
@@ -567,8 +631,12 @@ class ShelfButton(QtWidgets.QToolButton):
         for item in menu_items:
             label = item.get("label", "Unnamed")
             cmd = item.get("command", "")
+            item_source_type = item.get("sourceType")
+            if not item_source_type:
+                _, detected_type = extract_command_and_type(cmd)
+                item_source_type = detected_type if detected_type == "python" else self.source_type
             action = menu.addAction(label)
-            action.triggered.connect(lambda checked=False, c=cmd, t=self.source_type: self.shelf_manager.execute_command(c, t))
+            action.triggered.connect(lambda checked=False, c=cmd, t=item_source_type: self.shelf_manager.execute_command(c, t))
 
         if menu_items:
             menu.addSeparator()
@@ -1041,7 +1109,18 @@ def extract_maya_button_data(event):
                         m_label = cmds.menuItem(item, query=True, label=True) or "Item"
                         m_cmd = cmds.menuItem(item, query=True, command=True) or ""
                         if m_cmd:
-                            menu_items.append({"label": m_label, "command": m_cmd})
+                            m_stp = "mel"
+                            try:
+                                m_stp = cmds.menuItem(item, query=True, sourceType=True) or "mel"
+                            except Exception:
+                                pass
+                            clean_cmd, detected_type = extract_command_and_type(m_cmd)
+                            final_stp = detected_type if detected_type == "python" else m_stp
+                            menu_items.append({
+                                "label": m_label,
+                                "command": clean_cmd,
+                                "sourceType": final_stp
+                            })
                     except Exception:
                         pass
         except Exception:
@@ -2387,6 +2466,28 @@ class SpShelf:
                     for shelf in self.shelves:
                         shelf["label_visible"] = False
                         shelf["collapsed"] = False
+
+                # Auto-sanitize and heal any commands / menuItems that may be corrupted or wrapped
+                for shelf in self.shelves:
+                    for btn in shelf.get("buttons", []):
+                        if not isinstance(btn, dict) or btn.get("type") == "separator":
+                            continue
+                        if "command" in btn and btn["command"]:
+                            _, clean_c, c_type = sanitize_command(btn["command"], btn.get("label", ""))
+                            btn["command"] = clean_c
+                            if c_type == "python":
+                                btn["sourceType"] = "python"
+                        if "doubleClickCommand" in btn and btn["doubleClickCommand"]:
+                            _, clean_dc, _ = sanitize_command(btn["doubleClickCommand"])
+                            btn["doubleClickCommand"] = clean_dc
+                        for mi in btn.get("menuItems", []):
+                            m_cmd = mi.get("command", "")
+                            m_lbl = mi.get("label", "")
+                            if m_cmd:
+                                fixed_lbl, clean_m_cmd, m_type = sanitize_command(m_cmd, m_lbl)
+                                mi["label"] = fixed_lbl
+                                mi["command"] = clean_m_cmd
+                                mi["sourceType"] = m_type
             except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
                 cmds.warning(f"Resetting corrupted JSON file: {self.user_data_file}")
                 self.save_user_data()
@@ -2409,6 +2510,14 @@ class SpShelf:
             cmds.warning("Invalid or empty command provided.")
             return
         try:
+            # Auto-detect if command is wrapped in MEL's python(...) syntax or corrupted
+            _, clean_cmd, detected_type = sanitize_command(command)
+            if detected_type == "python":
+                command = clean_cmd
+                source_type = "python"
+            else:
+                command = clean_cmd
+
             try:
                 command = command.encode('utf-8').decode('unicode_escape')
             except Exception:
@@ -2662,6 +2771,12 @@ class SpShelf:
                 item["backgroundColor"] = parsed_bg
                 item["buttonBackground"] = parsed_bg
                 item["enableBackground"] = True
+            cmd = item.get("command", "")
+            if cmd:
+                clean_cmd, detected_type = extract_command_and_type(cmd)
+                if detected_type == "python":
+                    item["command"] = clean_cmd
+                    item["sourceType"] = "python"
             return item
 
         button_data = {}
@@ -2712,17 +2827,23 @@ class SpShelf:
                         button_data["_parsedBackgroundColor"] = vals[:3]
                 except Exception:
                     pass
+            elif re.search(r'-m(?:i|enuItem)\s+"', line):
+                for m in re.finditer(r'-m(?:i|enuItem)\s+"((?:\\.|[^"\\])*)"\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)', line):
+                    raw_label = m.group(1)
+                    raw_cmd = m.group(2)
+                    label = raw_label.replace(r'\"', '"').replace(r'\\', '\\')
+                    unescaped_cmd = raw_cmd.replace(r'\"', '"').replace(r'\\', '\\')
+                    clean_cmd, cmd_type = extract_command_and_type(unescaped_cmd)
+                    button_data.setdefault("menuItems", []).append({
+                        "label": label,
+                        "command": clean_cmd,
+                        "sourceType": cmd_type
+                    })
             elif any(line.startswith(k) for k in ["-label", "-image", "-annotation", "-command", "-sourceType", "-doubleClickCommand"]):
                 parts = line.split("\"", 1)
                 if len(parts) > 1:
                     key = line.split()[0][1:]
                     button_data[key] = parts[1].rsplit("\"", 1)[0]
-            elif line.startswith("-mi"):
-                menu_item_parts = line.split("(", 1)
-                if len(menu_item_parts) == 2:
-                    label = menu_item_parts[0].split("\"")[1]
-                    command = menu_item_parts[1].rsplit(")", 1)[0].strip().strip('"')
-                    button_data.setdefault("menuItems", []).append({"label": label, "command": command})
 
         fin = _finalize_item(button_data)
         if fin:

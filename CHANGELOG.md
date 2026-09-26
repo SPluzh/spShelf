@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.9]
+- **Bug Fix / Popup Menu Items (`-mi`) with Parentheses**:
+    - Replaced fragile `split("(", 1)` parsing with robust regular expressions matching `-mi` and `-menuItem`.
+    - Correctly handles popup menu items whose labels contain parentheses (such as `"Turn OFF (Selected Only)"`), preventing label truncation and command corruption.
+- **Embedded Python in MEL Execution (`python("...")`)**:
+    - Added automatic detection and unwrapping of Python commands wrapped inside MEL's `python("...")` or `python('...')` syntax.
+    - Embedded Python scripts are cleanly extracted, unescaped from MEL string literal formatting, and executed natively via Python's `exec` without syntax or `NameError` failures.
+- **Per-Item `sourceType` Support**:
+    - Shelf popup menu items (`menuItems`) now store their own `sourceType` (`"python"` vs `"mel"`), rather than blindly inheriting the parent button's `sourceType`.
+    - Both drag-and-drop from Maya shelves (`extract_maya_button_data`) and shelf file parser (`parse_shelf_file`) query and preserve per-item `sourceType`.
+- **Self-Healing Corrupted Data**:
+    - Added automatic detection and healing in `load_user_data()` and `execute_command()`: existing corrupted entries in `sp_shelf_data.json` resulting from older versions are repaired on the fly.
+
 ## [2.1.8]
 - **Button Styling / Attribute Preservation**: Added full extraction and rendering of custom button and label colors when adding buttons:
     - **Label Color**: Reads and applies `overlayLabelColor` (RGB) to the button's overlay text.
