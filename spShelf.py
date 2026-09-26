@@ -1,4 +1,6 @@
-# spShelf v2.2.3 (Pure Qt / PySide rewrite)
+# spShelf v2.2.4 (Pure Qt / PySide rewrite)
+# v2.2.4 - Added button width parsing from MEL shelves (-width, -w, -flexibleWidthType/Value)
+#          and drag-and-drop extraction, supporting custom-width shelf buttons.
 # v2.2.3 - Fixed multi-row shelf separator sizing: separators now always maintain compact width
 #          and do not expand to button width or consume button column slots when shelves wrap across multiple rows.
 # v2.2.2 - Added white triangle indicator in the bottom-right corner for shelf buttons
@@ -379,6 +381,25 @@ def get_system_scale(screen=None):
     return 1.0
 
 
+def get_maya_dpi_scale():
+    """
+    Returns the interface scaling factor that Maya applies to its native UI controls.
+    Used to unscale control dimensions queried from Maya UI (e.g. shelfButton width/height).
+    """
+    try:
+        import maya.cmds as cmds
+        if hasattr(cmds, "mayaDpiSetting"):
+            rsv = cmds.mayaDpiSetting(query=True, realScaleValue=True)
+            if rsv and float(rsv) > 0:
+                return float(rsv)
+    except Exception:
+        pass
+    try:
+        return get_system_scale()
+    except Exception:
+        return 1.0
+
+
 # ----------------------------------------------------------------------
 # Custom UI Components
 # ----------------------------------------------------------------------
@@ -410,7 +431,21 @@ class ShelfButton(QtWidgets.QToolButton):
         
         self.setToolTip(annotation)
         btn_sz = max(24, int(round(38 * self.scale)))
-        self.setFixedSize(btn_sz, btn_sz)
+        btn_w = btn_sz
+        raw_width = button_data.get("width")
+        if raw_width is None and button_data.get("flexibleWidthType") == 2:
+            raw_width = button_data.get("flexibleWidthValue")
+        if raw_width is not None:
+            try:
+                w_val = int(raw_width)
+                is_custom_type = (button_data.get("flexibleWidthType") == 2)
+                # In Maya MEL, 34 and 35 are the default square shelf button widths.
+                # If width is custom (e.g. 20, 50, 100) or explicitly flexibleWidthType 2, apply it.
+                if w_val > 0 and (w_val not in (34, 35) or is_custom_type):
+                    btn_w = max(12, int(round(w_val * self.scale)))
+            except (ValueError, TypeError):
+                pass
+        self.setFixedSize(btn_w, btn_sz)
         self.setAutoRaise(True)
         self.setFocusPolicy(QtCore.Qt.NoFocus)
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -1267,6 +1302,31 @@ def extract_maya_button_data(event):
         except Exception as e:
             log_debug(f"extract_maya_button_data: error querying backgroundColor/enableBackground: {e}")
 
+        # Query button width if set (unscale by Maya's native UI DPI scaling)
+        maya_dpi = get_maya_dpi_scale()
+        button_width = None
+        try:
+            raw_w = cmds.shelfButton(ctrl_name, query=True, width=True)
+            if raw_w and float(raw_w) > 0:
+                button_width = int(round(float(raw_w) / maya_dpi))
+        except Exception as e:
+            log_debug(f"extract_maya_button_data: error querying width: {e}")
+
+        flexible_width_type = None
+        flexible_width_value = None
+        try:
+            fwt = cmds.shelfButton(ctrl_name, query=True, flexibleWidthType=True)
+            if fwt is not None:
+                flexible_width_type = int(fwt)
+        except Exception:
+            pass
+        try:
+            fwv = cmds.shelfButton(ctrl_name, query=True, flexibleWidthValue=True)
+            if fwv is not None:
+                flexible_width_value = int(round(float(fwv) / maya_dpi))
+        except Exception:
+            pass
+
         btn_dict = {
             "label": label or overlay or "MayaButton",
             "annotation": ann or label or overlay,
@@ -1276,6 +1336,12 @@ def extract_maya_button_data(event):
             "sourceType": source_type,
             "doubleClickCommand": dbl_cmd
         }
+        if button_width is not None:
+            btn_dict["width"] = button_width
+        if flexible_width_type is not None:
+            btn_dict["flexibleWidthType"] = flexible_width_type
+        if flexible_width_value is not None:
+            btn_dict["flexibleWidthValue"] = flexible_width_value
         if overlay_label_color is not None:
             btn_dict["overlayLabelColor"] = overlay_label_color
             btn_dict["labelColor"] = overlay_label_color
@@ -2992,7 +3058,30 @@ class SpShelf:
                         "command": clean_cmd,
                         "sourceType": cmd_type
                     })
-            elif any(line.startswith(k) for k in ["-label", "-image", "-annotation", "-command", "-sourceType", "-doubleClickCommand"]):
+            elif (line.startswith("-width") or line.startswith("-w ")) and not line.startswith("-marginWidth"):
+                try:
+                    tokens = line.rstrip(";").split()
+                    if len(tokens) >= 2:
+                        w_val = int(float(tokens[1]))
+                        if w_val > 0:
+                            button_data["width"] = w_val
+                except Exception:
+                    pass
+            elif line.startswith("-flexibleWidthType"):
+                try:
+                    tokens = line.rstrip(";").split()
+                    if len(tokens) >= 2:
+                        button_data["flexibleWidthType"] = int(tokens[1])
+                except Exception:
+                    pass
+            elif line.startswith("-flexibleWidthValue"):
+                try:
+                    tokens = line.rstrip(";").split()
+                    if len(tokens) >= 2:
+                        button_data["flexibleWidthValue"] = int(tokens[1])
+                except Exception:
+                    pass
+            elif any(line.startswith(k) for k in ["-label", "-image", "-annotation", "-command", "-sourceType", "-doubleClickCommand", "-style"]):
                 parts = line.split("\"", 1)
                 if len(parts) > 1:
                     key = line.split()[0][1:]

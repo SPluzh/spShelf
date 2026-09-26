@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.4]
+- **Button Width Parsing & Sizing**:
+    - Added parsing of custom button widths (`-width` / `-w`) and flexible width attributes (`-flexibleWidthType`, `-flexibleWidthValue`) from Maya shelf MEL files (`parse_shelf_file`).
+    - Added extraction of button width and flexible width parameters when dragging buttons from native Maya shelves into `spShelf` (`extract_maya_button_data`), automatically unscaling Maya's native High-DPI UI multiplier (`mayaDpiSetting`) to store the true base unscaled width.
+    - `ShelfButton` now respects custom button widths (> 35px), rendering wide buttons with proper scaling while maintaining standard square dimensions (38px) for default buttons.
+
 ## [2.2.3]
 - **Multi-Row Shelf Separator Sizing**:
     - Fixed an issue where separators expanded to the width of full shelf buttons (38px) when a shelf wrapped across multiple rows.
