@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.0]
+- **UX/Interactivity**: Implemented drag-and-drop support from Autodesk Maya's native shelves into `spShelf`:
+    - **Native Shelf Drag Acceptance**: Dragging buttons with Middle Mouse Button (**MMB**) from any standard Maya shelf (Modeling, Curves, Animation, Custom, etc.) into `spShelf` seamlessly copies them into the target shelf.
+    - **Full Attribute Extraction**: Automatically inspects and preserves all button properties: execution command, `sourceType` (MEL/Python), icon path/resource, overlay label, annotation tooltip, and double-click commands.
+    - **Context Menu Support**: Recursively inspects and imports RMB popup menu items (`menuItems`) associated with the Maya shelf button.
+    - **Script Editor Drag-to-Shelf**: Dragging selected Python or MEL code from Maya's Script Editor directly into `spShelf` automatically creates a new shelf button with auto-detected interpreter type.
+    - **Safe Copy Mode**: Leaves original Maya shelf buttons untouched to prevent accidental modification of default Maya shelves.
+
 ## [2.4.0]
 - **UX/Interactivity**: Implemented native Maya-style Middle Mouse Button (**MMB**) drag-and-drop reordering:
     - **Intra-shelf reordering**: Dragging buttons or separators within the same shelf dynamically rearranges their positions.

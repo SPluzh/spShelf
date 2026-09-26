@@ -1,4 +1,6 @@
-# spShelf v2.4.0 (Pure Qt / PySide rewrite)
+# spShelf v2.5.0 (Pure Qt / PySide rewrite)
+# v2.5.0 - Added native Maya shelf drag-and-drop support:
+#          MMB drag buttons from Maya standard shelves and Script Editor into spShelf.
 # v2.4.0 - Added Middle Mouse Button (MMB) drag-and-drop support:
 #          reorder buttons within a shelf and move buttons between shelves
 #          with animated high-contrast insertion indicators and collapsed shelf drop/expand.
@@ -825,6 +827,166 @@ class ShelfToggleIslandButton(QtWidgets.QToolButton):
             painter.drawRoundedRect(QtCore.QRectF(cx + 2.5 * s, cy, btn_w, btn_h), corner, corner)
 
 
+def find_maya_shelf_button(widget):
+    """Recursively checks widget hierarchy to locate a native Maya shelfButton control name."""
+    w = widget
+    while w is not None:
+        try:
+            name = w.objectName()
+            if name and cmds.shelfButton(name, exists=True):
+                return name
+        except Exception:
+            pass
+        w = w.parent() if hasattr(w, "parent") else None
+    return None
+
+
+def extract_maya_button_data(event):
+    """
+    Extracts complete button configuration from an external Maya drag event:
+    1. Direct Maya shelfButton inspection via event.source() Qt widget hierarchy.
+    2. Maya application/x-maya-data payload inspection.
+    3. Fallback: text/plain inspection for control names or raw script code.
+    Returns a dict compatible with spShelf button schema, or None.
+    """
+    ctrl_name = None
+
+    # 1. Try finding shelfButton via event.source()
+    src = event.source()
+    if src:
+        ctrl_name = find_maya_shelf_button(src)
+
+    # 2. Try application/x-maya-data MIME payload
+    mime = event.mimeData()
+    if not ctrl_name and mime.hasFormat("application/x-maya-data"):
+        try:
+            raw_bytes = bytes(mime.data("application/x-maya-data"))
+            tokens = [s.strip() for s in raw_bytes.decode("utf-8", errors="ignore").replace("\x00", "\n").split("\n") if s.strip()]
+            for token in tokens:
+                try:
+                    if cmds.shelfButton(token, exists=True):
+                        ctrl_name = token
+                        break
+                except Exception:
+                    pass
+        except Exception as e:
+            log_debug(f"extract_maya_button_data: error reading application/x-maya-data: {e}")
+
+    # 3. Try text/plain for control name
+    if not ctrl_name and mime.hasText():
+        txt = mime.text().strip()
+        try:
+            if cmds.shelfButton(txt, exists=True):
+                ctrl_name = txt
+        except Exception:
+            pass
+
+    # If we found a valid Maya shelfButton control, query all its attributes
+    if ctrl_name:
+        log_debug(f"extract_maya_button_data: found Maya shelfButton control '{ctrl_name}'")
+        try:
+            cmd = cmds.shelfButton(ctrl_name, query=True, command=True) or ""
+        except Exception:
+            cmd = ""
+        try:
+            source_type = cmds.shelfButton(ctrl_name, query=True, sourceType=True) or "mel"
+        except Exception:
+            source_type = "mel"
+        try:
+            image = cmds.shelfButton(ctrl_name, query=True, image=True) or "commandButton.png"
+        except Exception:
+            image = "commandButton.png"
+        try:
+            overlay = cmds.shelfButton(ctrl_name, query=True, imageOverlayLabel=True) or ""
+        except Exception:
+            overlay = ""
+        try:
+            label = cmds.shelfButton(ctrl_name, query=True, label=True) or ""
+        except Exception:
+            label = ""
+        try:
+            ann = cmds.shelfButton(ctrl_name, query=True, annotation=True) or ""
+        except Exception:
+            ann = ""
+        try:
+            dbl_cmd = cmds.shelfButton(ctrl_name, query=True, doubleClickCommand=True) or ""
+        except Exception:
+            dbl_cmd = ""
+
+        # Query popup menu items (RMB sub-commands)
+        menu_items = []
+        try:
+            popups = cmds.shelfButton(ctrl_name, query=True, popupMenuArray=True) or []
+            for p in popups:
+                items = cmds.popupMenu(p, query=True, itemArray=True) or []
+                for item in items:
+                    try:
+                        m_label = cmds.menuItem(item, query=True, label=True) or "Item"
+                        m_cmd = cmds.menuItem(item, query=True, command=True) or ""
+                        if m_cmd:
+                            menu_items.append({"label": m_label, "command": m_cmd})
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        btn_dict = {
+            "label": label or overlay or "MayaButton",
+            "annotation": ann or label or overlay,
+            "image": image,
+            "imageOverlayLabel": overlay,
+            "command": cmd,
+            "sourceType": source_type,
+            "doubleClickCommand": dbl_cmd
+        }
+        if menu_items:
+            btn_dict["menuItems"] = menu_items
+        return btn_dict
+
+    # 4. Fallback: text dropped from Maya Script Editor
+    if mime.hasText():
+        raw_text = mime.text().strip()
+        if raw_text:
+            log_debug(f"extract_maya_button_data: creating button from dropped script text ({len(raw_text)} chars)")
+            if raw_text.startswith("import ") or raw_text.startswith("from ") or "\ndef " in raw_text or "cmds." in raw_text or "print(" in raw_text:
+                stype = "python"
+                icon = "pythonFamily.png"
+            else:
+                stype = "mel"
+                icon = "commandButton.png"
+
+            first_line = raw_text.splitlines()[0].strip()
+            short_label = first_line[:6].strip()
+
+            return {
+                "label": short_label or "Script",
+                "annotation": raw_text[:80],
+                "image": icon,
+                "imageOverlayLabel": short_label[:4].upper() if len(short_label) <= 4 else "",
+                "command": raw_text,
+                "sourceType": stype,
+                "doubleClickCommand": ""
+            }
+
+    return None
+
+
+def is_acceptable_shelf_drag(event):
+    """Validates if a drag event is from spShelf itself or an external Maya shelf/script."""
+    mime = event.mimeData()
+    if mime.hasFormat("application/x-spshelf-item"):
+        return True
+    if mime.hasFormat("application/x-maya-data"):
+        return True
+    src = event.source()
+    if src:
+        if find_maya_shelf_button(src) is not None:
+            return True
+    if mime.hasText() and mime.text().strip():
+        return True
+    return False
+
+
 class ShelfHeaderButton(QtWidgets.QToolButton):
     """
     Shelf section header button with drag-and-drop acceptance:
@@ -847,12 +1009,18 @@ class ShelfHeaderButton(QtWidgets.QToolButton):
                 self.section.on_collapse_changed(False)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat("application/x-spshelf-item") and self.section and self.section.shelf_index is not None:
+        if is_acceptable_shelf_drag(event) and self.section and self.section.shelf_index is not None:
             event.acceptProposedAction()
             if self.section._is_collapsed:
                 self._hover_expand_timer.start()
         else:
             super(ShelfHeaderButton, self).dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if is_acceptable_shelf_drag(event) and self.section and self.section.shelf_index is not None:
+            event.acceptProposedAction()
+        else:
+            super(ShelfHeaderButton, self).dragMoveEvent(event)
 
     def dragLeaveEvent(self, event):
         self._hover_expand_timer.stop()
@@ -860,22 +1028,35 @@ class ShelfHeaderButton(QtWidgets.QToolButton):
 
     def dropEvent(self, event):
         self._hover_expand_timer.stop()
-        if event.mimeData().hasFormat("application/x-spshelf-item") and self.section and self.section.shelf_index is not None:
-            try:
-                raw_bytes = bytes(event.mimeData().data("application/x-spshelf-item"))
-                payload = json.loads(raw_bytes.decode("utf-8"))
-                src_shelf = payload.get("source_shelf_idx")
-                src_idx = payload.get("source_item_idx")
-                dst_shelf = self.section.shelf_index
-                target_win = self.section.shelf_window
-                if target_win and target_win.manager:
-                    dst_buttons = target_win.manager.shelves[dst_shelf].get("buttons", [])
-                    dst_idx = len(dst_buttons)
-                    target_win.manager.move_shelf_item(src_shelf, src_idx, dst_shelf, dst_idx)
-                    event.acceptProposedAction()
-                    return
-            except Exception as e:
-                log_debug(f"ShelfHeaderButton.dropEvent error: {e}")
+        if self.section and self.section.shelf_index is not None:
+            dst_shelf = self.section.shelf_index
+            target_win = self.section.shelf_window
+
+            # 1. Internal spShelf drag
+            if event.mimeData().hasFormat("application/x-spshelf-item"):
+                try:
+                    raw_bytes = bytes(event.mimeData().data("application/x-spshelf-item"))
+                    payload = json.loads(raw_bytes.decode("utf-8"))
+                    src_shelf = payload.get("source_shelf_idx")
+                    src_idx = payload.get("source_item_idx")
+                    if target_win and target_win.manager:
+                        dst_buttons = target_win.manager.shelves[dst_shelf].get("buttons", [])
+                        dst_idx = len(dst_buttons)
+                        target_win.manager.move_shelf_item(src_shelf, src_idx, dst_shelf, dst_idx)
+                        event.acceptProposedAction()
+                        return
+                except Exception as e:
+                    log_debug(f"ShelfHeaderButton.dropEvent internal error: {e}")
+
+            # 2. External Maya shelf button or script text drop
+            btn_data = extract_maya_button_data(event)
+            if btn_data and target_win and target_win.manager:
+                dst_buttons = target_win.manager.shelves[dst_shelf].get("buttons", [])
+                dst_idx = len(dst_buttons)
+                target_win.manager.insert_external_button(dst_shelf, dst_idx, btn_data)
+                event.acceptProposedAction()
+                return
+
         super(ShelfHeaderButton, self).dropEvent(event)
 
 
@@ -1072,13 +1253,13 @@ class ShelfGridWidget(QtWidgets.QWidget):
             return target_idx, rect, False
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat("application/x-spshelf-item"):
+        if is_acceptable_shelf_drag(event):
             event.acceptProposedAction()
         else:
             super(ShelfGridWidget, self).dragEnterEvent(event)
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasFormat("application/x-spshelf-item"):
+        if is_acceptable_shelf_drag(event):
             pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
             target_idx, rect, is_horiz = self._calculate_target_slot(pos)
             self._drop_indicator = {
@@ -1101,6 +1282,7 @@ class ShelfGridWidget(QtWidgets.QWidget):
         self._drop_indicator = None
         self.update()
 
+        # 1. Internal spShelf drag
         if event.mimeData().hasFormat("application/x-spshelf-item"):
             try:
                 raw = bytes(event.mimeData().data("application/x-spshelf-item"))
@@ -1118,7 +1300,21 @@ class ShelfGridWidget(QtWidgets.QWidget):
                 event.acceptProposedAction()
                 return
             except Exception as e:
-                log_debug(f"ShelfGridWidget dropEvent error: {e}")
+                log_debug(f"ShelfGridWidget dropEvent internal error: {e}")
+
+        # 2. External Maya shelf button or script text drop
+        btn_data = extract_maya_button_data(event)
+        if btn_data:
+            if indicator and "target_index" in indicator:
+                dst_idx = indicator["target_index"]
+            else:
+                pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+                dst_idx, _, _ = self._calculate_target_slot(pos)
+
+            self.manager.insert_external_button(self.shelf_index, dst_idx, btn_data)
+            event.acceptProposedAction()
+            return
+
         super(ShelfGridWidget, self).dropEvent(event)
 
     def paintEvent(self, event):
@@ -2124,6 +2320,25 @@ class SpShelf:
             dst_buttons.insert(target_item_idx, item)
 
         self.save_user_data()
+        if self.window_widget:
+            self.window_widget.rebuild_content()
+
+    def insert_external_button(self, shelf_idx, target_idx, button_data):
+        """
+        Inserts a new button (e.g. copied from Maya native shelf or script editor)
+        into the specified shelf at target_idx, saves to JSON, and updates the UI.
+        """
+        log_debug(f"insert_external_button: shelf={shelf_idx}, target_idx={target_idx}, data={button_data.get('label')}")
+        if not (0 <= shelf_idx < len(self.shelves)):
+            return
+
+        shelf = self.shelves[shelf_idx]
+        buttons = shelf.setdefault("buttons", [])
+        target_idx = max(0, min(target_idx, len(buttons)))
+
+        buttons.insert(target_idx, button_data)
+        self.save_user_data()
+
         if self.window_widget:
             self.window_widget.rebuild_content()
 
