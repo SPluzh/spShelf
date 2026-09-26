@@ -1,4 +1,6 @@
-# spShelf v2.3.3 (Pure Qt / PySide rewrite)
+# spShelf v2.3.4 (Pure Qt / PySide rewrite)
+# v2.3.4 - Added "Add Empty Shelf" button in Settings and shelf rename capability.
+#          Added visual empty shelf drop zone and placeholder in ShelfGridWidget.
 # v2.3.3 - Fixed separator context menu background color: properly scoped SeparatorWidget style
 #          to avoid cascading inheritance, ensuring standard Maya dark color #525252 for separator dropdown menus.
 # v2.3.2 - Set standard Maya dark color #525252 for dropdown/popup menus and added configurable FONT_SIZE setting (default 13px).
@@ -2869,6 +2871,20 @@ class ShelfGridWidget(QtWidgets.QWidget):
 
         self.row_layouts = {}
 
+    def sizeHint(self):
+        if not self.items:
+            btn_sz = max(24, int(round(38 * self.scale)))
+            min_w = max(120, int(round(160 * self.scale)))
+            return QtCore.QSize(min_w, btn_sz)
+        return super(ShelfGridWidget, self).sizeHint()
+
+    def minimumSizeHint(self):
+        if not self.items:
+            btn_sz = max(24, int(round(38 * self.scale)))
+            min_w = max(120, int(round(160 * self.scale)))
+            return QtCore.QSize(min_w, btn_sz)
+        return super(ShelfGridWidget, self).minimumSizeHint()
+
     def horizontalSpacing(self):
         return self.grid_pad
 
@@ -3015,6 +3031,39 @@ class ShelfGridWidget(QtWidgets.QWidget):
 
     def paintEvent(self, event):
         super(ShelfGridWidget, self).paintEvent(event)
+        if not self.items:
+            painter = QtGui.QPainter(self)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            btn_sz = max(24, int(round(38 * self.scale)))
+            pad = max(2, int(round(2 * self.scale)))
+            w = max(10, self.width() - pad * 2)
+            h = max(btn_sz - pad * 2, self.height() - pad * 2)
+            rect = QtCore.QRect(pad, pad, w, h)
+            radius = max(2, int(round(3 * self.scale)))
+
+            # Draw dashed slot
+            pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 45))
+            pen.setStyle(QtCore.Qt.DashLine)
+            pen.setWidth(1)
+            painter.setPen(pen)
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255, 8)))
+            painter.drawRoundedRect(rect, radius, radius)
+
+            # Draw placeholder label
+            shelf_name = ""
+            if 0 <= self.shelf_index < len(self.manager.shelves):
+                shelf_name = self.manager.shelves[self.shelf_index].get("name", "")
+
+            font = painter.font()
+            font_sz = max(8, int(round(10 * self.scale)))
+            font.setPointSize(font_sz)
+            painter.setFont(font)
+            painter.setPen(QtGui.QColor(200, 200, 200, 120))
+
+            text = f"Empty Shelf ({shelf_name}) — Drop items here" if shelf_name else "Empty Shelf — Drop items here"
+            painter.drawText(rect, QtCore.Qt.AlignCenter, text)
+            painter.end()
+
         if self._drop_indicator and self._drop_indicator.get("rect"):
             painter = QtGui.QPainter(self)
             painter.setRenderHint(QtGui.QPainter.Antialiasing)
@@ -3504,6 +3553,10 @@ class SpShelfWindow(QtWidgets.QWidget):
                     grid_widget.add_shelf_item(btn, cur_row, cur_col)
                     cur_col += 1
 
+            if not shelf.get("buttons"):
+                btn_sz = max(24, int(round(38 * self.scale)))
+                grid_widget.setMinimumHeight(btn_sz)
+
             section.content_layout.addWidget(grid_widget)
             self.container_layout.addWidget(section)
 
@@ -3594,6 +3647,9 @@ class SpShelfWindow(QtWidgets.QWidget):
         add_sep_action = menu.addAction("Add Separator")
         add_sep_action.triggered.connect(lambda: self.manager.add_separator(shelf_index, target_idx))
 
+        add_shelf_action = menu.addAction("Add Empty Shelf")
+        add_shelf_action.triggered.connect(lambda: self.manager.add_empty_shelf())
+
         menu.addSeparator()
 
         move_up_action = menu.addAction("Move Shelf Up")
@@ -3605,6 +3661,9 @@ class SpShelfWindow(QtWidgets.QWidget):
         move_down_action.triggered.connect(lambda: self.manager.move_shelf(shelf_index, shelf_index + 1))
 
         menu.addSeparator()
+
+        rename_action = menu.addAction("Rename Shelf")
+        rename_action.triggered.connect(lambda: self.manager.rename_shelf(shelf_index))
 
         vis = self.manager.shelves[shelf_index].get("label_visible", True)
         label_action = menu.addAction("Hide Label" if vis else "Show Label")
@@ -3686,6 +3745,13 @@ class SpShelfWindow(QtWidgets.QWidget):
         add_shelf_btn.setFixedHeight(btn_h)
         add_shelf_btn.clicked.connect(self.manager.add_current_shelf)
         layout.addWidget(add_shelf_btn)
+
+        # Add empty shelf button
+        add_empty_shelf_btn = QtWidgets.QPushButton("Add Empty Shelf", settings_section)
+        add_empty_shelf_btn.setStyleSheet(f"background-color: #5285a6; color: #ffffff; font-weight: bold; min-height: {btn_h}px;")
+        add_empty_shelf_btn.setFixedHeight(btn_h)
+        add_empty_shelf_btn.clicked.connect(lambda: self.manager.add_empty_shelf())
+        layout.addWidget(add_empty_shelf_btn)
 
         # UI Scale row
         scale_layout = QtWidgets.QHBoxLayout()
@@ -4177,6 +4243,36 @@ class SpShelf:
                 self.save_user_data()
                 if self.window_widget:
                     self.window_widget.rebuild_content()
+                    self.window_widget.adjust_size_to_content()
+
+    def rename_shelf(self, shelf_index):
+        """
+        Prompts the user to rename an existing shelf.
+        """
+        if not (0 <= shelf_index < len(self.shelves)):
+            return
+        cur_name = self.shelves[shelf_index].get("name", "")
+        try:
+            res = cmds.promptDialog(
+                title="Rename Shelf",
+                message="Enter Shelf Name:",
+                text=cur_name,
+                button=["OK", "Cancel"],
+                defaultButton="OK",
+                cancelButton="Cancel",
+                dismissString="Cancel"
+            )
+            if res != "OK":
+                return
+            new_name = cmds.promptDialog(query=True, text=True).strip()
+            if new_name and new_name != cur_name:
+                self.shelves[shelf_index]["name"] = new_name
+                self.save_user_data()
+                if self.window_widget:
+                    self.window_widget.rebuild_content()
+                    self.window_widget.adjust_size_to_content()
+        except Exception as e:
+            log_debug(f"rename_shelf error: {e}")
 
     def move_shelf(self, source_idx, target_idx):
         """
@@ -4592,6 +4688,55 @@ class SpShelf:
             self.window_widget.rebuild_content()
             self.window_widget.adjust_size_to_content()
         cmds.warning(f"Shelf '{shelf}' added successfully.")
+
+    def add_empty_shelf(self, shelf_name=None):
+        """
+        Creates a new empty shelf and appends it to the shelf list.
+        Prompts the user for a shelf name via Maya promptDialog if not provided.
+        """
+        log_debug("add_empty_shelf invoked")
+        default_name = "Shelf_1"
+        if not shelf_name:
+            existing_names = [s.get("name", "") for s in self.shelves]
+            counter = len(self.shelves) + 1
+            default_name = f"Shelf_{counter}"
+            while default_name in existing_names or f"Shelf {counter}" in existing_names:
+                counter += 1
+                default_name = f"Shelf_{counter}"
+
+            try:
+                res = cmds.promptDialog(
+                    title="New Empty Shelf",
+                    message="Enter Shelf Name:",
+                    text=default_name,
+                    button=["OK", "Cancel"],
+                    defaultButton="OK",
+                    cancelButton="Cancel",
+                    dismissString="Cancel"
+                )
+                if res != "OK":
+                    return
+                shelf_name = cmds.promptDialog(query=True, text=True)
+            except Exception as e:
+                log_debug(f"cmds.promptDialog error: {e}")
+                shelf_name = default_name
+
+        shelf_name = (shelf_name or "").strip()
+        if not shelf_name:
+            shelf_name = default_name
+
+        global_vis = self.settings.get("SHOW_FRAME_LABEL", True)
+        self.shelves.append({
+            "name": shelf_name,
+            "buttons": [],
+            "collapsed": False,
+            "label_visible": global_vis
+        })
+        self.save_user_data()
+        if self.window_widget:
+            self.window_widget.rebuild_content()
+            self.window_widget.adjust_size_to_content()
+        cmds.warning(f"Empty shelf '{shelf_name}' added successfully.")
 
     def show(self, close_on_repeat=False, reopen=False):
         """

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.4]
+- **Add Empty Shelf Button in Settings**:
+    - Added an **«Add Empty Shelf»** button in the Settings rollout panel below "Add Current Shelf" styled with Maya's primary action accent (`#5285a6`).
+    - Opens Maya's native `promptDialog` allowing the user to specify a custom shelf name, with smart auto-incrementing default names (`Shelf_1`, `Shelf_2`, etc.).
+- **Visual Empty Shelf Drop Zone & Placeholder**:
+    - `ShelfGridWidget` now renders a dedicated empty slot with a dashed outline and subtle label (`Empty Shelf (Name) — Drop items here`) when a shelf has 0 buttons or separators.
+    - Integrated with Middle Mouse Button (MMB) drag-and-drop: hovering buttons over an empty shelf renders the cyan drop indicator and inserts buttons at index 0.
+- **Shelf Header & Grid Context Menu Enhancements**:
+    - Added **«Add Empty Shelf»** to the right-click context menu of shelf headers and empty shelf slots.
+    - Added **«Rename Shelf»** to the right-click context menu to conveniently rename any shelf at any time.
+
 ## [2.3.3]
 - **Fixed Separator Dropdown Menu Background Color (`#525252`)**:
     - Fixed an issue where the right-click context menu of shelf separators inherited an un-scoped `background: transparent;` stylesheet rule from `SeparatorWidget`, causing separator menus to render with a black/transparent background instead of Maya's standard dark tone `#525252`.
