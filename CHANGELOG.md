@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.8]
+- **Button Styling / Attribute Preservation**: Added full extraction and rendering of custom button and label colors when adding buttons:
+    - **Label Color**: Reads and applies `overlayLabelColor` (RGB) to the button's overlay text.
+    - **Label Background & Transparency**: Reads `overlayLabelBackColor` (RGBA) and renders a styled rounded pill/box behind the overlay label with exact background color and alpha transparency.
+    - **Button Background**: Detects if a custom button background is enabled (`enableBackground`) and extracts `backgroundColor` (RGB), rendering an interactive tinted background with hover and pressed states.
+    - **MEL Shelf Parser & Drag-and-Drop**: Supports both drag-and-drop from native Maya shelves (`extract_maya_button_data`) and shelf file imports (`parse_shelf_file`).
+
 ## [2.1.7]
 - **UX/Context Menu**: Added "Move Shelf Up" and "Move Shelf Down" actions to shelf context menus:
     - Easily reorder shelves directly from shelf headers, empty shelf background, or section frame context menus.

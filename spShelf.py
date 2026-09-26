@@ -1,4 +1,5 @@
-# spShelf v2.1.7 (Pure Qt / PySide rewrite)
+# spShelf v2.1.8 (Pure Qt / PySide rewrite)
+# v2.1.8 - Added reading and rendering of label color, label background, background transparency, and button background (if set).
 # v2.1.7 - Removed WindowStaysOnTopHint, added "Move Shelf Up/Down" to shelf context menus, and increased max columns to 30.
 # v2.1.6 - Added "Add Separator" option to shelf, button, and separator context menus.
 # v2.1.5 - Added native Maya shelf drag-and-drop support:
@@ -326,6 +327,37 @@ class ShelfButton(QtWidgets.QToolButton):
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
+        # Colors from button data
+        self.label_color = (
+            button_data.get("labelColor")
+            or button_data.get("label_color")
+            or button_data.get("overlayLabelColor")
+        )
+        self.label_background = (
+            button_data.get("labelBackground")
+            or button_data.get("label_background")
+        )
+        if not self.label_background and "overlayLabelBackColor" in button_data:
+            olb = button_data["overlayLabelBackColor"]
+            if olb and len(olb) >= 3:
+                self.label_background = olb[:3]
+
+        self.background_transparency = (
+            button_data.get("backgroundTransparency")
+            if "backgroundTransparency" in button_data
+            else button_data.get("background_transparency")
+        )
+        if self.background_transparency is None and "overlayLabelBackColor" in button_data:
+            olb = button_data["overlayLabelBackColor"]
+            if olb and len(olb) >= 4:
+                self.background_transparency = olb[3]
+
+        self.button_background = (
+            button_data.get("buttonBackground")
+            or button_data.get("button_background")
+            or button_data.get("backgroundColor")
+        )
+
         icon_name = button_data.get("image", "commandButton.png")
         self._pixmap = get_maya_pixmap(icon_name)
 
@@ -333,10 +365,35 @@ class ShelfButton(QtWidgets.QToolButton):
         super(ShelfButton, self).paintEvent(event)
 
         painter = None
-        # Draw icon scaled to the full button with DPI and smooth filtering
+
+        # 1. Custom button background (if set)
+        if self.button_background and len(self.button_background) >= 3:
+            if painter is None:
+                painter = QtGui.QPainter(self)
+                painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            r = max(0, min(255, int(self.button_background[0] * 255)))
+            g = max(0, min(255, int(self.button_background[1] * 255)))
+            b = max(0, min(255, int(self.button_background[2] * 255)))
+            bg_color = QtGui.QColor(r, g, b, 230)
+            if self.isDown():
+                bg_color = bg_color.darker(130)
+            elif self.underMouse():
+                bg_color = bg_color.lighter(120)
+
+            radius = max(2, int(round(3 * self.scale)))
+            bg_rect = self.rect().adjusted(1, 1, -1, -1)
+            if self.isDown():
+                bg_rect.adjust(1, 1, 1, 1)
+
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QBrush(bg_color))
+            painter.drawRoundedRect(bg_rect, radius, radius)
+
+        # 2. Draw icon scaled to the full button with DPI and smooth filtering
         if self._pixmap and not self._pixmap.isNull():
-            painter = QtGui.QPainter(self)
-            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            if painter is None:
+                painter = QtGui.QPainter(self)
+                painter.setRenderHint(QtGui.QPainter.Antialiasing)
             painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
 
             rect = self.rect().adjusted(1, 1, -1, -1)
@@ -352,11 +409,12 @@ class ShelfButton(QtWidgets.QToolButton):
             target_y = rect.y() + (rect.height() - scaled_pix.height()) // 2
             painter.drawPixmap(target_x, target_y, scaled_pix)
 
-        # Draw overlay label centered at bottom
+        # 3. Draw overlay label centered at bottom
         if self.overlay_label:
             if painter is None:
                 painter = QtGui.QPainter(self)
             painter.setRenderHint(QtGui.QPainter.TextAntialiasing)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
 
             font = painter.font()
             if hasattr(font, "setPointSizeF"):
@@ -371,15 +429,64 @@ class ShelfButton(QtWidgets.QToolButton):
             if self.isDown():
                 text_rect.adjust(1, 1, 1, 1)
 
-            # High-contrast outline/shadow
-            painter.setPen(QtGui.QColor(0, 0, 0, 220))
-            offset = max(1, int(round(1 * self.scale)))
-            for dx, dy in ((-offset, 0), (offset, 0), (0, -offset), (0, offset), (offset, offset)):
-                painter.drawText(text_rect.translated(dx, dy), QtCore.Qt.AlignBottom | QtCore.Qt.AlignHCenter, self.overlay_label)
+            # Determine text foreground color
+            if self.label_color and len(self.label_color) >= 3:
+                tr = max(0, min(255, int(self.label_color[0] * 255)))
+                tg = max(0, min(255, int(self.label_color[1] * 255)))
+                tb = max(0, min(255, int(self.label_color[2] * 255)))
+                fg_color = QtGui.QColor(tr, tg, tb, 255)
+            else:
+                fg_color = QtGui.QColor(255, 255, 255, 240)
+
+            # Draw label background box if defined
+            has_solid_bg = False
+            if self.label_background and len(self.label_background) >= 3:
+                bg_alpha = 0.5
+                if self.background_transparency is not None:
+                    try:
+                        bg_alpha = float(self.background_transparency)
+                    except (ValueError, TypeError):
+                        bg_alpha = 0.5
+                if bg_alpha > 0.01:
+                    fm = QtGui.QFontMetrics(font)
+                    text_w = fm.horizontalAdvance(self.overlay_label) if hasattr(fm, "horizontalAdvance") else fm.width(self.overlay_label)
+                    text_h = fm.height()
+                    center_x = text_rect.center().x()
+                    bottom_y = text_rect.bottom()
+                    box_pad_x = max(1, int(round(2 * self.scale)))
+                    box_pad_y = max(0, int(round(1 * self.scale)))
+                    box_w = min(self.rect().width() - 2, text_w + box_pad_x * 2)
+                    box_h = text_h + box_pad_y
+                    box_x = max(1, center_x - box_w // 2)
+                    box_y = bottom_y - box_h + 1
+                    label_box = QtCore.QRect(box_x, box_y, box_w, box_h)
+
+                    lr = max(0, min(255, int(self.label_background[0] * 255)))
+                    lg = max(0, min(255, int(self.label_background[1] * 255)))
+                    lb = max(0, min(255, int(self.label_background[2] * 255)))
+                    la = max(0, min(255, int(bg_alpha * 255)))
+                    box_radius = max(1, int(round(2 * self.scale)))
+                    painter.setPen(QtCore.Qt.NoPen)
+                    painter.setBrush(QtGui.QBrush(QtGui.QColor(lr, lg, lb, la)))
+                    painter.drawRoundedRect(label_box, box_radius, box_radius)
+                    if bg_alpha > 0.6:
+                        has_solid_bg = True
+
+            # High-contrast outline/shadow (only if no solid label background)
+            if not has_solid_bg:
+                lum = 0.299 * fg_color.red() + 0.587 * fg_color.green() + 0.114 * fg_color.blue()
+                shadow_color = QtGui.QColor(0, 0, 0, 220) if lum > 128 else QtGui.QColor(255, 255, 255, 180)
+                painter.setPen(shadow_color)
+                offset = max(1, int(round(1 * self.scale)))
+                for dx, dy in ((-offset, 0), (offset, 0), (0, -offset), (0, offset), (offset, offset)):
+                    painter.drawText(text_rect.translated(dx, dy), QtCore.Qt.AlignBottom | QtCore.Qt.AlignHCenter, self.overlay_label)
 
             # Bright foreground text
-            painter.setPen(QtGui.QColor(255, 255, 255, 240))
+            painter.setPen(fg_color)
             painter.drawText(text_rect, QtCore.Qt.AlignBottom | QtCore.Qt.AlignHCenter, self.overlay_label)
+
+        if painter is not None:
+            painter.end()
 
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.MiddleButton:
@@ -940,6 +1047,40 @@ def extract_maya_button_data(event):
         except Exception:
             pass
 
+        # Query label color (overlayLabelColor)
+        overlay_label_color = None
+        try:
+            raw_olc = cmds.shelfButton(ctrl_name, query=True, overlayLabelColor=True)
+            if raw_olc and len(raw_olc) >= 3:
+                overlay_label_color = [round(float(c), 4) for c in raw_olc[:3]]
+        except Exception as e:
+            log_debug(f"extract_maya_button_data: error querying overlayLabelColor: {e}")
+
+        # Query label background & background transparency (overlayLabelBackColor)
+        overlay_label_back_color = None
+        label_background = None
+        bg_transparency = None
+        try:
+            raw_olb = cmds.shelfButton(ctrl_name, query=True, overlayLabelBackColor=True)
+            if raw_olb and len(raw_olb) >= 3:
+                overlay_label_back_color = [round(float(c), 4) for c in raw_olb]
+                label_background = [round(float(c), 4) for c in raw_olb[:3]]
+                if len(raw_olb) >= 4:
+                    bg_transparency = round(float(raw_olb[3]), 4)
+        except Exception as e:
+            log_debug(f"extract_maya_button_data: error querying overlayLabelBackColor: {e}")
+
+        # Query button background if set (enableBackground & backgroundColor)
+        button_bg = None
+        try:
+            enable_bg = bool(cmds.shelfButton(ctrl_name, query=True, enableBackground=True))
+            if enable_bg:
+                raw_bg = cmds.shelfButton(ctrl_name, query=True, backgroundColor=True)
+                if raw_bg and len(raw_bg) >= 3:
+                    button_bg = [round(float(c), 4) for c in raw_bg[:3]]
+        except Exception as e:
+            log_debug(f"extract_maya_button_data: error querying backgroundColor/enableBackground: {e}")
+
         btn_dict = {
             "label": label or overlay or "MayaButton",
             "annotation": ann or label or overlay,
@@ -949,6 +1090,20 @@ def extract_maya_button_data(event):
             "sourceType": source_type,
             "doubleClickCommand": dbl_cmd
         }
+        if overlay_label_color is not None:
+            btn_dict["overlayLabelColor"] = overlay_label_color
+            btn_dict["labelColor"] = overlay_label_color
+        if overlay_label_back_color is not None:
+            btn_dict["overlayLabelBackColor"] = overlay_label_back_color
+        if label_background is not None:
+            btn_dict["labelBackground"] = label_background
+        if bg_transparency is not None:
+            btn_dict["backgroundTransparency"] = bg_transparency
+        if button_bg is not None:
+            btn_dict["backgroundColor"] = button_bg
+            btn_dict["buttonBackground"] = button_bg
+            btn_dict["enableBackground"] = True
+
         if menu_items:
             btn_dict["menuItems"] = menu_items
         return btn_dict
@@ -2492,18 +2647,71 @@ class SpShelf:
         with open(shelf_file_path, 'r', encoding='utf-8', errors='ignore') as f:
             lines = f.readlines()
 
+        def _finalize_item(item):
+            if not item:
+                return None
+            if item.get("type") == "separator":
+                return item
+            enable_bg = item.pop("_enableBackground", None)
+            parsed_bg = item.pop("_parsedBackgroundColor", None)
+            if enable_bg is True and parsed_bg is not None:
+                item["backgroundColor"] = parsed_bg
+                item["buttonBackground"] = parsed_bg
+                item["enableBackground"] = True
+            elif enable_bg is None and parsed_bg is not None:
+                item["backgroundColor"] = parsed_bg
+                item["buttonBackground"] = parsed_bg
+                item["enableBackground"] = True
+            return item
+
         button_data = {}
         for line in lines:
             line = line.strip()
             if line.startswith("shelfButton"):
-                if button_data:
-                    buttons.append(button_data)
+                fin = _finalize_item(button_data)
+                if fin:
+                    buttons.append(fin)
                 button_data = {}
             elif line.startswith("separator"):
-                if button_data:
-                    buttons.append(button_data)
+                fin = _finalize_item(button_data)
+                if fin:
+                    buttons.append(fin)
                 buttons.append({"type": "separator"})
                 button_data = {}
+            elif line.startswith("-overlayLabelColor"):
+                try:
+                    tokens = line.rstrip(";").split()
+                    vals = [round(float(x), 4) for x in tokens[1:]]
+                    if len(vals) >= 3:
+                        button_data["overlayLabelColor"] = vals[:3]
+                        button_data["labelColor"] = vals[:3]
+                except Exception:
+                    pass
+            elif line.startswith("-overlayLabelBackColor"):
+                try:
+                    tokens = line.rstrip(";").split()
+                    vals = [round(float(x), 4) for x in tokens[1:]]
+                    if len(vals) >= 3:
+                        button_data["overlayLabelBackColor"] = vals
+                        button_data["labelBackground"] = vals[:3]
+                        if len(vals) >= 4:
+                            button_data["backgroundTransparency"] = vals[3]
+                except Exception:
+                    pass
+            elif line.startswith("-enableBackground"):
+                try:
+                    tokens = line.rstrip(";").split()
+                    button_data["_enableBackground"] = bool(int(tokens[1]))
+                except Exception:
+                    pass
+            elif line.startswith("-backgroundColor"):
+                try:
+                    tokens = line.rstrip(";").split()
+                    vals = [round(float(x), 4) for x in tokens[1:]]
+                    if len(vals) >= 3:
+                        button_data["_parsedBackgroundColor"] = vals[:3]
+                except Exception:
+                    pass
             elif any(line.startswith(k) for k in ["-label", "-image", "-annotation", "-command", "-sourceType", "-doubleClickCommand"]):
                 parts = line.split("\"", 1)
                 if len(parts) > 1:
@@ -2516,8 +2724,9 @@ class SpShelf:
                     command = menu_item_parts[1].rsplit(")", 1)[0].strip().strip('"')
                     button_data.setdefault("menuItems", []).append({"label": label, "command": command})
 
-        if button_data:
-            buttons.append(button_data)
+        fin = _finalize_item(button_data)
+        if fin:
+            buttons.append(fin)
 
         return buttons
 
