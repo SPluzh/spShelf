@@ -1,4 +1,6 @@
-# spShelf v2.3.4 (Pure Qt / PySide rewrite)
+# spShelf v2.3.5 (Pure Qt / PySide rewrite)
+# v2.3.5 - Interactive instant save on clicking any settings checkbox in Settings section:
+#          instantly persists settings to JSON and dynamically refreshes UI (separators, frame labels, title bar).
 # v2.3.4 - Added "Add Empty Shelf" button in Settings and shelf rename capability.
 #          Added visual empty shelf drop zone and placeholder in ShelfGridWidget.
 # v2.3.3 - Fixed separator context menu background color: properly scoped SeparatorWidget style
@@ -3458,6 +3460,20 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.rebuild_content()
         self._update_settings_btn_pos()
 
+    @staticmethod
+    def _clear_layout(layout):
+        """Recursively clears all child widgets and sub-layouts from a layout."""
+        if not layout:
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+            child_layout = item.layout()
+            if child_layout:
+                SpShelfWindow._clear_layout(child_layout)
+
     def rebuild_content(self):
         """Clears and re-populates shelves and settings widgets."""
         cur_vscroll = 0
@@ -3466,11 +3482,48 @@ class SpShelfWindow(QtWidgets.QWidget):
 
         # Clear existing items
         self.shelf_sections = []
-        while self.container_layout.count():
-            item = self.container_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        self._clear_layout(self.container_layout)
+
+        base_row_spacing = self.manager.settings.get("ROW_SPACING", 1)
+        row_gap = max(0, int(round(base_row_spacing * self.scale)))
+
+        self.shelves_layout = QtWidgets.QVBoxLayout()
+        self.shelves_layout.setContentsMargins(0, 0, 0, 0)
+        self.shelves_layout.setSpacing(row_gap)
+        self.container_layout.addLayout(self.shelves_layout)
+
+        # Build Shelves inside self.shelves_layout
+        self.rebuild_shelves(adjust_size=False)
+
+        # Settings Section
+        self._build_settings_section()
+        settings_collapsed = self.manager.settings.get("SETTINGS_COLLAPSED", True)
+        if not self.manager.shelves:
+            settings_collapsed = False
+        self.settings_section.setVisible(not settings_collapsed)
+        if not settings_collapsed:
+            self.settings_section.set_collapsed(False)
+        self.settings_btn.setChecked(not settings_collapsed)
+        self._update_shelf_toggle_btn_state()
+
+        self.container_layout.addStretch()
+
+        self.adjust_size_to_content()
+        if cur_vscroll > 0 and hasattr(self, "scroll_area") and self.scroll_area:
+            QtCore.QTimer.singleShot(15, lambda: self.scroll_area.verticalScrollBar().setValue(cur_vscroll))
+
+    def rebuild_shelves(self, adjust_size=True):
+        """Clears and re-populates only the shelf sections without touching settings_section."""
+        cur_vscroll = 0
+        if hasattr(self, "scroll_area") and self.scroll_area and self.scroll_area.verticalScrollBar():
+            cur_vscroll = self.scroll_area.verticalScrollBar().value()
+
+        if not hasattr(self, "shelves_layout") or self.shelves_layout is None:
+            self.rebuild_content()
+            return
+
+        self.shelf_sections = []
+        self._clear_layout(self.shelves_layout)
 
         # Build Shelves
         col_count = max(1, self.manager.settings.get("COLUMN_COUNT", 4))
@@ -3571,24 +3624,14 @@ class SpShelfWindow(QtWidgets.QWidget):
                 grid_widget.setMinimumHeight(btn_sz)
 
             section.content_layout.addWidget(grid_widget)
-            self.container_layout.addWidget(section)
+            self.shelves_layout.addWidget(section)
 
-        # Settings Section
-        self._build_settings_section()
-        settings_collapsed = self.manager.settings.get("SETTINGS_COLLAPSED", True)
-        if not self.manager.shelves:
-            settings_collapsed = False
-        self.settings_section.setVisible(not settings_collapsed)
-        if not settings_collapsed:
-            self.settings_section.set_collapsed(False)
-        self.settings_btn.setChecked(not settings_collapsed)
         self._update_shelf_toggle_btn_state()
 
-        self.container_layout.addStretch()
-
-        self.adjust_size_to_content()
-        if cur_vscroll > 0 and hasattr(self, "scroll_area") and self.scroll_area:
-            QtCore.QTimer.singleShot(15, lambda: self.scroll_area.verticalScrollBar().setValue(cur_vscroll))
+        if adjust_size:
+            self.adjust_size_to_content()
+            if cur_vscroll > 0 and hasattr(self, "scroll_area") and self.scroll_area:
+                QtCore.QTimer.singleShot(15, lambda: self.scroll_area.verticalScrollBar().setValue(cur_vscroll))
 
     def adjust_size_to_content(self):
         """Triggers size adjustment immediately and with a short deferral for Maya."""
@@ -3868,9 +3911,11 @@ class SpShelfWindow(QtWidgets.QWidget):
         # Checkboxes
         self.cb_close_repeat = QtWidgets.QCheckBox("Close on Key Release", settings_section)
         self.cb_close_repeat.setChecked(self.manager.settings.get("CLOSE_ON_REPEAT_FLAG", False))
+        self.cb_close_repeat.toggled.connect(self._on_toggle_close_repeat)
 
         self.cb_under_cursor = QtWidgets.QCheckBox("Open under Cursor", settings_section)
         self.cb_under_cursor.setChecked(self.manager.settings.get("SHOW_WINDOW_UNDER_CURSOR", True))
+        self.cb_under_cursor.toggled.connect(self._on_toggle_under_cursor)
 
         self.cb_show_label = QtWidgets.QCheckBox("Show Frame Label", settings_section)
         self.cb_show_label.setChecked(self.manager.settings.get("SHOW_FRAME_LABEL", True))
@@ -3878,15 +3923,19 @@ class SpShelfWindow(QtWidgets.QWidget):
 
         self.cb_hide_title = QtWidgets.QCheckBox("Hide Title Bar", settings_section)
         self.cb_hide_title.setChecked(self.manager.settings.get("HIDE_TITLE_BAR", False))
+        self.cb_hide_title.toggled.connect(self._on_toggle_hide_title)
 
         self.cb_show_sep = QtWidgets.QCheckBox("Show Separators", settings_section)
         self.cb_show_sep.setChecked(self.manager.settings.get("SHOW_SEPARATORS", True))
+        self.cb_show_sep.toggled.connect(self._on_toggle_show_sep)
 
         self.cb_horiz_sep = QtWidgets.QCheckBox("Horizontal Separators", settings_section)
         self.cb_horiz_sep.setChecked(self.manager.settings.get("HORIZONTAL_SEPARATORS", False))
+        self.cb_horiz_sep.toggled.connect(self._on_toggle_horiz_sep)
 
         self.cb_dotted_sep = QtWidgets.QCheckBox("Dotted Style", settings_section)
         self.cb_dotted_sep.setChecked(self.manager.settings.get("DOTTED_SEPARATORS", False))
+        self.cb_dotted_sep.toggled.connect(self._on_toggle_dotted_sep)
 
         for cb in [self.cb_close_repeat, self.cb_under_cursor, self.cb_show_label,
                    self.cb_hide_title, self.cb_show_sep, self.cb_horiz_sep, self.cb_dotted_sep]:
@@ -3919,8 +3968,48 @@ class SpShelfWindow(QtWidgets.QWidget):
 
         self.container_layout.addWidget(settings_section)
 
+    def _on_toggle_close_repeat(self, checked):
+        log_debug(f"_on_toggle_close_repeat: checked={checked}")
+        self.manager.settings["CLOSE_ON_REPEAT_FLAG"] = checked
+        self.manager.save_user_data()
+
+    def _on_toggle_under_cursor(self, checked):
+        log_debug(f"_on_toggle_under_cursor: checked={checked}")
+        self.manager.settings["SHOW_WINDOW_UNDER_CURSOR"] = checked
+        self.manager.save_user_data()
+
     def _on_toggle_show_frame_label(self, checked):
+        log_debug(f"_on_toggle_show_frame_label: checked={checked}")
         self.manager.toggle_frame_labels(checked)
+
+    def _on_toggle_hide_title(self, checked):
+        log_debug(f"_on_toggle_hide_title: checked={checked}")
+        self.manager.settings["HIDE_TITLE_BAR"] = checked
+        self.manager.save_user_data()
+        cur_pos = self.pos()
+        self._configure_window_flags()
+        self.show()
+        self.move(cur_pos)
+        self.adjust_size_to_content()
+        self._update_settings_btn_pos()
+
+    def _on_toggle_show_sep(self, checked):
+        log_debug(f"_on_toggle_show_sep: checked={checked}")
+        self.manager.settings["SHOW_SEPARATORS"] = checked
+        self.manager.save_user_data()
+        self.rebuild_shelves()
+
+    def _on_toggle_horiz_sep(self, checked):
+        log_debug(f"_on_toggle_horiz_sep: checked={checked}")
+        self.manager.settings["HORIZONTAL_SEPARATORS"] = checked
+        self.manager.save_user_data()
+        self.rebuild_shelves()
+
+    def _on_toggle_dotted_sep(self, checked):
+        log_debug(f"_on_toggle_dotted_sep: checked={checked}")
+        self.manager.settings["DOTTED_SEPARATORS"] = checked
+        self.manager.save_user_data()
+        self.rebuild_shelves()
 
     def update_frame_labels_visibility(self, visible):
         """Live updates header button visibility across all shelf sections without full rebuild."""

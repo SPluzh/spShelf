@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.5]
+- **Interactive Settings Checkboxes with Instant Persistence**:
+    - Clicking any checkbox in the Settings rollout panel now immediately saves and persists configuration to `sp_shelf_data.json` without requiring the user to press the "Save Settings" button.
+    - **Live UI Updates**:
+        - **Show Separators (`SHOW_SEPARATORS`)**: Instantly shows or hides separators across all shelves.
+        - **Horizontal Separators (`HORIZONTAL_SEPARATORS`)**: Instantly toggles separators between full-width horizontal divider lines and compact vertical cell dividers.
+        - **Dotted Style (`DOTTED_SEPARATORS`)**: Dynamically switches separator lines between dotted (`. . . .`) and solid accent styles.
+        - **Hide Title Bar (`HIDE_TITLE_BAR`)**: Dynamically toggles between frameless tool mode and native window title bar while maintaining exact window screen position.
+        - **Show Frame Label (`SHOW_FRAME_LABEL`)**: Live update across all shelf headers.
+        - **Close on Key Release (`CLOSE_ON_REPEAT_FLAG`)** & **Open under Cursor (`SHOW_WINDOW_UNDER_CURSOR`)**: Instantly saved to configuration.
+    - Added modular `rebuild_shelves()` and recursive `_clear_layout()` allowing live layout refreshes of shelves without recreating or destroying the Settings section widget, preserving user focus and interaction state.
+
 ## [2.3.4]
 - **Add Empty Shelf Button in Settings**:
     - Added an **«Add Empty Shelf»** button in the Settings rollout panel below "Add Current Shelf" styled with Maya's primary action accent (`#5285a6`).
