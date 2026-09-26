@@ -1,4 +1,5 @@
-# spShelf v2.3.5 (Pure Qt / PySide rewrite)
+# spShelf v2.3.6 (Pure Qt / PySide rewrite)
+# v2.3.6 - Disabled debug output: set DEBUG = False, routed execution and cancel notifications to log_debug.
 # v2.3.5 - Interactive instant save on clicking any settings checkbox in Settings section:
 #          instantly persists settings to JSON and dynamically refreshes UI (separators, frame labels, title bar).
 # v2.3.4 - Added "Add Empty Shelf" button in Settings and shelf rename capability.
@@ -141,7 +142,7 @@ except ImportError:
     except ImportError:
         raise ImportError("spShelf requires PySide6 or PySide2 to be installed in Maya.")
 
-DEBUG = True
+DEBUG = False
 
 def log_debug(msg):
     if DEBUG:
@@ -741,7 +742,7 @@ class ShelfButton(QtWidgets.QToolButton):
                 elif self.shelf_manager:
                     self.shelf_manager.execute_command(self.command, self.source_type)
             else:
-                print(f"spShelf: Action '{self.overlay_label or 'Button'}' canceled (dragged off)")
+                log_debug(f"Action '{self.overlay_label or 'Button'}' canceled (dragged off)")
             return
         super(ShelfButton, self).mouseReleaseEvent(event)
 
@@ -4284,10 +4285,10 @@ class SpShelf:
                 pass
 
             if source_type.lower() == "python":
-                print(f"Executing Python command:\n{command}")
+                log_debug(f"Executing Python command:\n{command}")
                 exec(command, globals())
             else:
-                print(f"Executing MEL command:\n{command}")
+                log_debug(f"Executing MEL command:\n{command}")
                 mel.eval(command)
         except Exception as e:
             cmds.warning(f"Failed to execute command: {command}. Error: {e}")

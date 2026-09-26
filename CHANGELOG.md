@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.6]
+- **Disabled Debug Output**:
+    - Set `DEBUG = False` to prevent debug traces (`[spShelf DEBUG] ...`) from flooding Maya's Script Editor.
+    - Routed command execution notices (`Executing Python/MEL command`) and drag-off cancellation logs through `log_debug` so they remain silent in production.
+
 ## [2.3.5]
 - **Interactive Settings Checkboxes with Instant Persistence**:
     - Clicking any checkbox in the Settings rollout panel now immediately saves and persists configuration to `sp_shelf_data.json` without requiring the user to press the "Save Settings" button.
