@@ -4297,7 +4297,7 @@ class SpShelf:
         try:
             # If command is marked as MEL, check if it's actually wrapped in MEL's python(...) syntax
             if source_type.lower() != "python":
-                _, clean_cmd, detected_type = extract_command_and_type(command)
+                clean_cmd, detected_type = extract_command_and_type(command)
                 if detected_type == "python":
                     command = clean_cmd
                     source_type = "python"
