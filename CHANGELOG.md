@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.7]
+- **Fixed Command Execution and String Escaping**:
+    - **Eliminated `unicode_escape` from `execute_command()`**: Prevented `SyntaxError: EOL while scanning string literal` caused by decoding escape sequences (such as `'\n'` in string literals like speedCut line 5169) into raw control characters.
+    - **Safe Command Extraction & Sanitization**: Removed blanket string replacements (`.replace(r'\"', '"')` and `.replace(r'\\', '\\')`) from `extract_command_and_type()`, preserving Python code, raw strings, Windows paths, and regex untouched.
+    - **Native Maya Execution Environment**: Python commands now execute inside Python's `__main__` namespace (`exec(command, __main__.__dict__, __main__.__dict__)`), matching Maya's native shelf behavior and ensuring callbacks, global variables, and UI scripts function correctly without polluting the `spShelf` plugin namespace.
+    - **Popup Menu `sourceType` Protection**: Prevented `load_user_data()` and `extract_maya_button_data()` from overwriting Python popup menu items with `"mel"`.
+
 ## [2.3.6]
 - **Disabled Debug Output**:
     - Set `DEBUG = False` to prevent debug traces (`[spShelf DEBUG] ...`) from flooding Maya's Script Editor.

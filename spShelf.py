@@ -1,4 +1,7 @@
-# spShelf v2.3.6 (Pure Qt / PySide rewrite)
+# spShelf v2.3.7 (Pure Qt / PySide rewrite)
+# v2.3.7 - Fixed command execution and string escaping: eliminated unicode_escape and destructive quote/backslash
+#          replacements, preventing 'EOL while scanning string literal' errors (e.g. speedCut), fixed popup menu
+#          sourceType retention, and routed Python execution directly through __main__ namespace matching native Maya shelf behavior.
 # v2.3.6 - Disabled debug output: set DEBUG = False, routed execution and cancel notifications to log_debug.
 # v2.3.5 - Interactive instant save on clicking any settings checkbox in Settings section:
 #          instantly persists settings to JSON and dynamically refreshes UI (separators, frame labels, title bar).
@@ -61,29 +64,30 @@ def extract_command_and_type(cmd_str):
     Analyzes a command string and detects whether it is Python or MEL.
     Unwraps Python code if embedded inside MEL's python(...) syntax:
       e.g. python("import foo; foo.bar()") -> ('import foo; foo.bar()', 'python')
+    Preserves all Python code untouched without corrupting string escapes or quotes.
     """
     if not isinstance(cmd_str, str):
         return cmd_str, "mel"
     s = cmd_str.strip()
-    if r'\"' in s:
-        s = s.replace(r'\"', '"')
-    if r'\\' in s:
-        s = s.replace(r'\\', '\\')
 
     # Remove outer quotes if wrapped like "python(...)"
-    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
-        s = s[1:-1].strip()
+    unwrapped = s
+    if (unwrapped.startswith('"') and unwrapped.endswith('"')) or (unwrapped.startswith("'") and unwrapped.endswith("'")):
+        candidate = unwrapped[1:-1].strip()
+        if candidate.startswith("python(") and candidate.endswith(")"):
+            unwrapped = candidate
 
-    if (s.startswith('python("') and s.endswith('")')) or (s.startswith("python('") and s.endswith("')")):
-        inner = s[8:-2].strip()
+    if (unwrapped.startswith('python("') and unwrapped.endswith('")')) or (unwrapped.startswith("python('") and unwrapped.endswith("')")):
+        inner = unwrapped[8:-2]
         inner = inner.replace(r'\"', '"').replace(r"\'", "'")
         return inner, "python"
-    elif s.startswith("python(") and s.endswith(")"):
-        inner = s[7:-1].strip()
+    elif unwrapped.startswith("python(") and unwrapped.endswith(")"):
+        inner = unwrapped[7:-1].strip()
         if (inner.startswith('"') and inner.endswith('"')) or (inner.startswith("'") and inner.endswith("'")):
-            inner = inner[1:-1].strip()
+            inner = inner[1:-1]
             inner = inner.replace(r'\"', '"').replace(r"\'", "'")
             return inner, "python"
+
     return s, "mel"
 
 
@@ -97,20 +101,21 @@ def sanitize_command(cmd, label=""):
     if not isinstance(cmd, str):
         return label, cmd, "mel"
     s = cmd.strip()
-    if ')"' in s and '("' in s:
+    if '\n' not in s and ')"' in s and '("' in s:
         parts = s.split(')"', 1)
         trailing_label = parts[0].strip()
         after = parts[1].strip()
-        m = re.search(r'\(\s*["\']?([\s\S]*)', after)
-        if m:
-            inner = m.group(1).strip()
-            if inner.endswith('")') and not inner.startswith('python("'):
-                inner = inner[:-2].strip()
-            elif inner.endswith('"') and not (inner.startswith('"') and len(inner) > 1):
-                inner = inner[:-1].strip()
-            new_label = f"{label.rstrip()} ({trailing_label})".strip() if trailing_label and label else label
-            clean_cmd, cmd_type = extract_command_and_type(inner)
-            return new_label, clean_cmd, cmd_type
+        if after.startswith(('(', ' (', '"', ' "')):
+            m = re.search(r'\(\s*["\']?([\s\S]*)', after)
+            if m:
+                inner = m.group(1).strip()
+                if inner.endswith('")') and not inner.startswith('python("'):
+                    inner = inner[:-2].strip()
+                elif inner.endswith('"') and not (inner.startswith('"') and len(inner) > 1):
+                    inner = inner[:-1].strip()
+                new_label = f"{label.rstrip()} ({trailing_label})".strip() if trailing_label and label else label
+                clean_cmd, cmd_type = extract_command_and_type(inner)
+                return new_label, clean_cmd, cmd_type
 
     clean_cmd, cmd_type = extract_command_and_type(s)
     return label, clean_cmd, cmd_type
@@ -2458,6 +2463,11 @@ def extract_maya_button_data(event):
             source_type = cmds.shelfButton(ctrl_name, query=True, sourceType=True) or "mel"
         except Exception:
             source_type = "mel"
+        if source_type.lower() != "python" and cmd:
+            clean_btn_cmd, detected_btn_type = extract_command_and_type(cmd)
+            if detected_btn_type == "python":
+                cmd = clean_btn_cmd
+                source_type = "python"
         try:
             image = cmds.shelfButton(ctrl_name, query=True, image=True) or "commandButton.png"
         except Exception:
@@ -2478,6 +2488,10 @@ def extract_maya_button_data(event):
             dbl_cmd = cmds.shelfButton(ctrl_name, query=True, doubleClickCommand=True) or ""
         except Exception:
             dbl_cmd = ""
+        if dbl_cmd and source_type.lower() != "python":
+            clean_dbl, detected_dbl_type = extract_command_and_type(dbl_cmd)
+            if detected_dbl_type == "python":
+                dbl_cmd = clean_dbl
 
         # Query popup menu items (RMB sub-commands)
         menu_items = []
@@ -2512,8 +2526,12 @@ def extract_maya_button_data(event):
                                 m_stp = cmds.menuItem(item, query=True, sourceType=True) or "mel"
                             except Exception:
                                 pass
-                            clean_cmd, detected_type = extract_command_and_type(m_cmd)
-                            final_stp = detected_type if detected_type == "python" else m_stp
+                            if m_stp.lower() == "python":
+                                clean_cmd = m_cmd
+                                final_stp = "python"
+                            else:
+                                clean_cmd, detected_type = extract_command_and_type(m_cmd)
+                                final_stp = detected_type if detected_type == "python" else m_stp
                             menu_items.append({
                                 "label": m_label,
                                 "command": clean_cmd,
@@ -4220,13 +4238,15 @@ class SpShelf:
                         if not has_identity:
                             continue
                         if "command" in btn and btn["command"]:
-                            _, clean_c, c_type = sanitize_command(btn["command"], btn.get("label", ""))
-                            btn["command"] = clean_c
-                            if c_type == "python":
-                                btn["sourceType"] = "python"
+                            if btn.get("sourceType") != "python":
+                                _, clean_c, c_type = sanitize_command(btn["command"], btn.get("label", ""))
+                                btn["command"] = clean_c
+                                if c_type == "python":
+                                    btn["sourceType"] = "python"
                         if "doubleClickCommand" in btn and btn["doubleClickCommand"]:
-                            _, clean_dc, _ = sanitize_command(btn["doubleClickCommand"])
-                            btn["doubleClickCommand"] = clean_dc
+                            if btn.get("sourceType") != "python":
+                                _, clean_dc, _ = sanitize_command(btn["doubleClickCommand"])
+                                btn["doubleClickCommand"] = clean_dc
                         filtered_mis = []
                         for mi in btn.get("menuItems", []):
                             m_cmd = mi.get("command", "")
@@ -4234,14 +4254,18 @@ class SpShelf:
                             if is_default_maya_menu_item(m_cmd, m_lbl):
                                 continue
                             if m_cmd:
-                                fixed_lbl, clean_m_cmd, m_type = sanitize_command(m_cmd, m_lbl)
-                                mi["label"] = fixed_lbl
-                                mi["command"] = clean_m_cmd
-                                mi["sourceType"] = m_type
+                                if mi.get("sourceType") != "python":
+                                    fixed_lbl, clean_m_cmd, m_type = sanitize_command(m_cmd, m_lbl)
+                                    mi["label"] = fixed_lbl
+                                    mi["command"] = clean_m_cmd
+                                    if m_type == "python":
+                                        mi["sourceType"] = "python"
                             if "optionBoxCommand" in mi and mi["optionBoxCommand"]:
-                                _, clean_opt, opt_type = sanitize_command(mi["optionBoxCommand"])
-                                mi["optionBoxCommand"] = clean_opt
-                                mi["optionBoxSourceType"] = opt_type
+                                if mi.get("optionBoxSourceType") != "python":
+                                    _, clean_opt, opt_type = sanitize_command(mi["optionBoxCommand"])
+                                    mi["optionBoxCommand"] = clean_opt
+                                    if opt_type == "python":
+                                        mi["optionBoxSourceType"] = "python"
                             filtered_mis.append(mi)
                         if filtered_mis:
                             btn["menuItems"] = filtered_mis
@@ -4271,27 +4295,22 @@ class SpShelf:
             cmds.warning("Invalid or empty command provided.")
             return
         try:
-            # Auto-detect if command is wrapped in MEL's python(...) syntax or corrupted
-            _, clean_cmd, detected_type = sanitize_command(command)
-            if detected_type == "python":
-                command = clean_cmd
-                source_type = "python"
-            else:
-                command = clean_cmd
-
-            try:
-                command = command.encode('utf-8').decode('unicode_escape')
-            except Exception:
-                pass
+            # If command is marked as MEL, check if it's actually wrapped in MEL's python(...) syntax
+            if source_type.lower() != "python":
+                _, clean_cmd, detected_type = extract_command_and_type(command)
+                if detected_type == "python":
+                    command = clean_cmd
+                    source_type = "python"
 
             if source_type.lower() == "python":
                 log_debug(f"Executing Python command:\n{command}")
-                exec(command, globals())
+                import __main__
+                exec(command, __main__.__dict__, __main__.__dict__)
             else:
                 log_debug(f"Executing MEL command:\n{command}")
                 mel.eval(command)
         except Exception as e:
-            cmds.warning(f"Failed to execute command: {command}. Error: {e}")
+            cmds.warning(f"Failed to execute command: {command[:200]}... Error: {e}")
 
     def on_shelf_collapse(self, shelf_index, collapsed):
         log_debug(f"on_shelf_collapse: shelf={shelf_index}, collapsed={collapsed}")
