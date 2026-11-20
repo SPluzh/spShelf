@@ -3,9 +3,10 @@
 All notable changes to this project will be documented in this file.
 
 ## [2.3.9]
-- **Per-Shelf Half Size Buttons**:
+- **Per-Shelf Half Size Buttons & Button Creation**:
     - Added **"Half Size Buttons"** toggle to the shelf right-click context menu (header and shelf grid).
     - Scales all buttons and vertical separators in that shelf to 50% width and height (including custom-width buttons, overlay text, and dropdown corner indicators), persisted per shelf in `sp_shelf_data.json`.
+    - Added **"Add Button..."** to the shelf right-click context menu to create new buttons directly via `ButtonEditorDialog` (inserted at the clicked slot or appended to the shelf).
 
 ## [2.3.8]
 - **Prevent Stuck Window in Hold Mode (`Close on Key Release`)**:

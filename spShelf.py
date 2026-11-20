@@ -1,5 +1,5 @@
 # spShelf v2.3.9 (Pure Qt / PySide rewrite)
-# v2.3.9 - Added per-shelf "Half Size Buttons" option in shelf RMB context menu (50% width and height).
+# v2.3.9 - Added per-shelf "Half Size Buttons" option (50% width and height) and "Add Button..." creation in shelf RMB context menu.
 # v2.3.8 - Fixed stuck window in Hold mode: added configurable options to auto-close on focus loss
 #          (Close on Focus Loss), detect key release after command execution (Check Key After Command),
 #          keep the window open while Settings panel is expanded (Keep Open on Settings), and close on Escape key.
@@ -1257,11 +1257,13 @@ class ButtonEditorDialog(QtWidgets.QDialog):
     2. Commands (LMB Click and Double Click)
     3. Popup Menu Items (RMB Dropdown Commands)
     """
-    def __init__(self, shelf_manager, shelf_index, button_index, button_data, scale=1.0, parent=None):
+    def __init__(self, shelf_manager, shelf_index, button_index, button_data, scale=1.0, insert_index=None, parent=None):
         super(ButtonEditorDialog, self).__init__(parent)
         self.shelf_manager = shelf_manager
         self.shelf_index = shelf_index
         self.button_index = button_index
+        self.insert_index = insert_index
+        self.is_new = (button_index is None)
         self.scale = scale
         self.initial_data = json.loads(json.dumps(button_data))
         self.current_data = json.loads(json.dumps(button_data))
@@ -1269,7 +1271,8 @@ class ButtonEditorDialog(QtWidgets.QDialog):
 
         self.setObjectName("ButtonEditorDialog")
         btn_title = button_data.get("label") or button_data.get("imageOverlayLabel") or "Button"
-        self.setWindowTitle(f"Edit Button: {btn_title}")
+        prefix = "New Button" if self.is_new else "Edit Button"
+        self.setWindowTitle(f"{prefix}: {btn_title}")
         self.setWindowFlags(QtCore.Qt.Window)
 
         self._setup_ui()
@@ -2055,14 +2058,18 @@ class ButtonEditorDialog(QtWidgets.QDialog):
 
         # Update window title
         btn_title = self.label_edit.text().strip() or self.overlay_edit.text().strip() or "Button"
-        self.setWindowTitle(f"Edit Button: {btn_title}")
+        prefix = "New Button" if getattr(self, "is_new", False) else "Edit Button"
+        self.setWindowTitle(f"{prefix}: {btn_title}")
 
     def _on_reset_clicked(self):
         self._load_data(self.initial_data)
 
     def _on_save_clicked(self):
         final_data = self._collect_current_data()
-        success = self.shelf_manager.save_button_data(self.shelf_index, self.button_index, final_data)
+        if getattr(self, "is_new", False):
+            success = self.shelf_manager.create_button_data(self.shelf_index, self.insert_index, final_data)
+        else:
+            success = self.shelf_manager.save_button_data(self.shelf_index, self.button_index, final_data)
         if success:
             self.accept()
         else:
@@ -3766,6 +3773,9 @@ class SpShelfWindow(QtWidgets.QWidget):
             except Exception:
                 target_idx = None
 
+        add_btn_action = menu.addAction("Add Button...")
+        add_btn_action.triggered.connect(lambda: self.manager.open_new_button_editor(shelf_index, target_idx))
+
         add_sep_action = menu.addAction("Add Separator")
         add_sep_action.triggered.connect(lambda: self.manager.add_separator(shelf_index, target_idx))
 
@@ -4698,6 +4708,69 @@ class SpShelf:
         self._button_editor.show()
         self._button_editor.raise_()
         self._button_editor.activateWindow()
+
+    def open_new_button_editor(self, shelf_idx, target_idx=None):
+        """
+        Opens the button editor dialog to create a new button in the specified shelf.
+        """
+        log_debug(f"open_new_button_editor: shelf={shelf_idx}, target_idx={target_idx}")
+        if not (0 <= shelf_idx < len(self.shelves)):
+            cmds.warning(f"spShelf: Invalid shelf index {shelf_idx}")
+            return
+
+        if hasattr(self, "_button_editor") and self._button_editor is not None:
+            try:
+                self._button_editor.close()
+                self._button_editor.deleteLater()
+            except Exception:
+                pass
+            self._button_editor = None
+
+        default_data = {
+            "label": "New Button",
+            "image": "commandButton.png",
+            "command": "",
+            "sourceType": "python",
+            "annotation": "",
+            "imageOverlayLabel": ""
+        }
+
+        self._button_editor = ButtonEditorDialog(
+            shelf_manager=self,
+            shelf_index=shelf_idx,
+            button_index=None,
+            button_data=default_data,
+            scale=self.get_ui_scale(),
+            insert_index=target_idx,
+            parent=get_maya_main_window()
+        )
+        self._button_editor.show()
+        self._button_editor.raise_()
+        self._button_editor.activateWindow()
+
+    def create_button_data(self, shelf_idx, target_idx, new_button_data):
+        """
+        Inserts a newly created button into the specified shelf, saves to JSON,
+        and rebuilds the UI.
+        """
+        log_debug(f"create_button_data: shelf={shelf_idx}, target_idx={target_idx}, label={new_button_data.get('label')}")
+        if not (0 <= shelf_idx < len(self.shelves)):
+            return False
+        shelf = self.shelves[shelf_idx]
+        buttons = shelf.setdefault("buttons", [])
+        if target_idx is None or target_idx < 0 or target_idx > len(buttons):
+            target_idx = len(buttons)
+
+        buttons.insert(target_idx, new_button_data)
+        if shelf.get("collapsed", False):
+            shelf["collapsed"] = False
+
+        self.save_user_data()
+
+        if self.window_widget:
+            self.window_widget.rebuild_content()
+            self.window_widget.adjust_size_to_content()
+        return True
 
     def save_button_data(self, shelf_idx, button_idx, updated_button_data):
         """
