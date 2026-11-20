@@ -1,7 +1,7 @@
 # spShelf v2.3.8 (Pure Qt / PySide rewrite)
 # v2.3.8 - Fixed stuck window in Hold mode: added configurable options to auto-close on focus loss
-#          (Close on Focus Loss) and detect key release after command execution (Check Key After Command),
-#          preventing the menu from remaining open when invoking tools with external windows (GSTools, Arnold IPR) or slow operations.
+#          (Close on Focus Loss), detect key release after command execution (Check Key After Command),
+#          keep the window open while Settings panel is expanded (Keep Open on Settings), and close on Escape key.
 # v2.3.7 - Fixed command execution and string escaping: eliminated unicode_escape and destructive quote/backslash
 #          replacements, preventing 'EOL while scanning string literal' errors (e.g. speedCut), fixed popup menu
 #          sourceType retention, and routed Python execution directly through __main__ namespace matching native Maya shelf behavior.
@@ -3963,6 +3963,10 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.cb_check_key_after_cmd.setChecked(self.manager.settings.get("CHECK_KEY_AFTER_CMD", True))
         self.cb_check_key_after_cmd.toggled.connect(self._on_toggle_check_key_after_cmd)
 
+        self.cb_keep_open_settings = QtWidgets.QCheckBox("Keep Open on Settings (Hold)", settings_section)
+        self.cb_keep_open_settings.setChecked(self.manager.settings.get("KEEP_OPEN_ON_SETTINGS", True))
+        self.cb_keep_open_settings.toggled.connect(self._on_toggle_keep_open_settings)
+
         self.cb_under_cursor = QtWidgets.QCheckBox("Open under Cursor", settings_section)
         self.cb_under_cursor.setChecked(self.manager.settings.get("SHOW_WINDOW_UNDER_CURSOR", True))
         self.cb_under_cursor.toggled.connect(self._on_toggle_under_cursor)
@@ -3988,8 +3992,8 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.cb_dotted_sep.toggled.connect(self._on_toggle_dotted_sep)
 
         for cb in [self.cb_close_repeat, self.cb_close_deactivate, self.cb_check_key_after_cmd,
-                   self.cb_under_cursor, self.cb_show_label, self.cb_hide_title,
-                   self.cb_show_sep, self.cb_horiz_sep, self.cb_dotted_sep]:
+                   self.cb_keep_open_settings, self.cb_under_cursor, self.cb_show_label,
+                   self.cb_hide_title, self.cb_show_sep, self.cb_horiz_sep, self.cb_dotted_sep]:
             layout.addWidget(cb)
 
         # Save Settings button
@@ -4032,6 +4036,11 @@ class SpShelfWindow(QtWidgets.QWidget):
     def _on_toggle_check_key_after_cmd(self, checked):
         log_debug(f"_on_toggle_check_key_after_cmd: checked={checked}")
         self.manager.settings["CHECK_KEY_AFTER_CMD"] = checked
+        self.manager.save_user_data()
+
+    def _on_toggle_keep_open_settings(self, checked):
+        log_debug(f"_on_toggle_keep_open_settings: checked={checked}")
+        self.manager.settings["KEEP_OPEN_ON_SETTINGS"] = checked
         self.manager.save_user_data()
 
     def _on_toggle_under_cursor(self, checked):
@@ -4110,6 +4119,7 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.manager.settings["CLOSE_ON_REPEAT_FLAG"] = self.cb_close_repeat.isChecked()
         self.manager.settings["CLOSE_ON_DEACTIVATE"] = self.cb_close_deactivate.isChecked()
         self.manager.settings["CHECK_KEY_AFTER_CMD"] = self.cb_check_key_after_cmd.isChecked()
+        self.manager.settings["KEEP_OPEN_ON_SETTINGS"] = self.cb_keep_open_settings.isChecked()
         self.manager.settings["SHOW_WINDOW_UNDER_CURSOR"] = self.cb_under_cursor.isChecked()
         show_frame_label = self.cb_show_label.isChecked()
         self.manager.settings["SHOW_FRAME_LABEL"] = show_frame_label
@@ -4194,6 +4204,16 @@ class SpShelfWindow(QtWidgets.QWidget):
         self._drag_pos = None
         super(SpShelfWindow, self).mouseReleaseEvent(event)
 
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Escape:
+            log_debug("Escape key pressed -> hiding SpShelfWindow")
+            if self.manager:
+                self.manager._held_vk_codes.clear()
+            self.hide()
+            event.accept()
+            return
+        super(SpShelfWindow, self).keyPressEvent(event)
+
     def changeEvent(self, event):
         super(SpShelfWindow, self).changeEvent(event)
         if event.type() == QtCore.QEvent.WindowDeactivate:
@@ -4203,6 +4223,8 @@ class SpShelfWindow(QtWidgets.QWidget):
                 and self.manager.settings.get("CLOSE_ON_DEACTIVATE", True)
                 and self.isVisible()
             ):
+                if self.manager.settings.get("KEEP_OPEN_ON_SETTINGS", True) and self.manager.is_settings_open():
+                    return
                 if QtWidgets.QApplication.activePopupWidget() is not None:
                     return
                 editor = getattr(self.manager, "_button_editor", None)
@@ -4231,6 +4253,7 @@ class SpShelf:
         "CLOSE_ON_REPEAT_FLAG": False,
         "CLOSE_ON_DEACTIVATE": True,
         "CHECK_KEY_AFTER_CMD": True,
+        "KEEP_OPEN_ON_SETTINGS": True,
         "SHOW_WINDOW_UNDER_CURSOR": True,
         "SHOW_FRAME_LABEL": True,
         "TOOLBOX_WINDOW_STYLE": False,
@@ -4383,11 +4406,24 @@ class SpShelf:
         finally:
             self._check_key_release_after_command()
 
+    def is_settings_open(self):
+        """Returns True if the settings rollout panel is currently expanded/visible."""
+        if not self.window_widget:
+            return False
+        if hasattr(self.window_widget, "settings_section") and self.window_widget.settings_section:
+            try:
+                return self.window_widget.settings_section.isVisible()
+            except Exception:
+                pass
+        return not self.settings.get("SETTINGS_COLLAPSED", True)
+
     def _check_key_release_after_command(self):
         """Hides the window in Hold mode if the hotkey was released while the command ran."""
         if not self.window_widget or not self.window_widget.isVisible():
             return
         if not self.settings.get("CLOSE_ON_REPEAT_FLAG", False):
+            return
+        if self.settings.get("KEEP_OPEN_ON_SETTINGS", True) and self.is_settings_open():
             return
         if not self.settings.get("CHECK_KEY_AFTER_CMD", True):
             return
@@ -4966,6 +5002,9 @@ class SpShelf:
         # Handle Hold mode (Key Release)
         if close_on_repeat:
             if self.settings.get("CLOSE_ON_REPEAT_FLAG", False):
+                if self.settings.get("KEEP_OPEN_ON_SETTINGS", True) and self.is_settings_open():
+                    log_debug("Hold release ignored because Settings section is open")
+                    return
                 self._held_vk_codes.clear()
                 self.window_widget.hide()
             return

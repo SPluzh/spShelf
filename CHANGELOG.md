@@ -6,7 +6,9 @@ All notable changes to this project will be documented in this file.
 - **Prevent Stuck Window in Hold Mode (`Close on Key Release`)**:
     - **Close on Focus Loss (`CLOSE_ON_DEACTIVATE`)**: Automatically hides `spShelf` when it loses focus to an external or modal window (such as GS Toolbox, Arnold RenderView / IPR, or export file dialogs) while holding the hotkey, with protection for internal popup menus and editor dialogs.
     - **Check Key Release After Command (`CHECK_KEY_AFTER_CMD`)**: Detects via Windows API (`GetAsyncKeyState`) whether the hotkey was released during synchronous command execution (e.g. export or scene operations) and automatically closes the window upon command completion.
-    - **Configurable Settings**: Both behaviors can be toggled via checkboxes in the Settings rollout panel to easily test and compare workflows.
+    - **Keep Open on Settings (`KEEP_OPEN_ON_SETTINGS`)**: Prevents the shelf window from closing upon hotkey release when the Settings rollout panel is open, allowing full access to configuration without needing to hold down the key.
+    - **Close on Escape (`Esc`)**: Pressing `Escape` now immediately hides the shelf window in both Hold and Toggle modes.
+    - **Configurable Settings**: All behaviors can be toggled via individual checkboxes in the Settings rollout panel to easily test and customize workflows.
 
 ## [2.3.7]
 - **Fixed Command Execution and String Escaping**:
