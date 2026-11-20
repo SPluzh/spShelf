@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
     - Added **"Half Size Buttons"** toggle to the shelf right-click context menu (header and shelf grid).
     - Scales all buttons and vertical separators in that shelf to 50% width and height (including custom-width buttons, overlay text, and dropdown corner indicators), persisted per shelf in `sp_shelf_data.json`.
     - Added **"Add Button..."** to the shelf right-click context menu to create new buttons directly via `ButtonEditorDialog` (inserted at the clicked slot or appended to the shelf).
+    - Added **"Run Script"** test buttons in `ButtonEditorDialog` (Commands and Popup Menu Items tabs) to execute Python/MEL scripts immediately before saving.
 
 ## [2.3.8]
 - **Prevent Stuck Window in Hold Mode (`Close on Key Release`)**:

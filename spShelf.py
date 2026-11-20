@@ -1,5 +1,6 @@
 # spShelf v2.3.9 (Pure Qt / PySide rewrite)
-# v2.3.9 - Added per-shelf "Half Size Buttons" option (50% width and height) and "Add Button..." creation in shelf RMB context menu.
+# v2.3.9 - Added per-shelf "Half Size Buttons" option (50% width and height), "Add Button..." creation
+#          in shelf RMB context menu, and "Run Script" buttons in ButtonEditorDialog to test commands immediately.
 # v2.3.8 - Fixed stuck window in Hold mode: added configurable options to auto-close on focus loss
 #          (Close on Focus Loss), detect key release after command execution (Check Key After Command),
 #          keep the window open while Settings panel is expanded (Keep Open on Settings), and close on Escape key.
@@ -1011,9 +1012,10 @@ class PopupMenuEditorTab(QtWidgets.QWidget):
     """
     itemsChanged = QtCore.Signal()
 
-    def __init__(self, initial_items=None, scale=1.0, parent=None):
+    def __init__(self, initial_items=None, scale=1.0, shelf_manager=None, parent=None):
         super(PopupMenuEditorTab, self).__init__(parent)
         self.scale = scale
+        self.shelf_manager = shelf_manager
         self.items_data = []
         if initial_items and isinstance(initial_items, list):
             self.items_data = [dict(item) for item in initial_items if isinstance(item, dict)]
@@ -1087,8 +1089,15 @@ class PopupMenuEditorTab(QtWidgets.QWidget):
         detail_layout.addLayout(form_layout)
 
         # Command code editor
+        cmd_hdr = QtWidgets.QHBoxLayout()
         cmd_lbl = QtWidgets.QLabel("Command (Script):", self.detail_group)
-        detail_layout.addWidget(cmd_lbl)
+        cmd_hdr.addWidget(cmd_lbl)
+        cmd_hdr.addStretch()
+        self.item_run_btn = QtWidgets.QPushButton("Run Script", self.detail_group)
+        self.item_run_btn.setToolTip("Execute this menu item command now to test it")
+        self.item_run_btn.clicked.connect(lambda: self._run_editor_script(self.item_cmd_edit, self.item_lang_combo))
+        cmd_hdr.addWidget(self.item_run_btn)
+        detail_layout.addLayout(cmd_hdr)
 
         self.item_cmd_edit = CodeEditorWidget(scale=self.scale, parent=self.detail_group)
         self.item_cmd_edit.textChanged.connect(self._on_field_changed)
@@ -1125,6 +1134,14 @@ class PopupMenuEditorTab(QtWidgets.QWidget):
         self.opt_lang_combo.setEnabled(checked)
         self.opt_cmd_edit.setEnabled(checked)
         self._on_field_changed()
+
+    def _run_editor_script(self, editor, lang_combo):
+        cmd_text = editor.toPlainText()
+        if not cmd_text.strip():
+            cmds.warning("spShelf: Command is empty.")
+            return
+        if self.shelf_manager:
+            self.shelf_manager.execute_command(cmd_text, lang_combo.currentText())
 
     def _on_field_changed(self):
         if self._loading or not (0 <= self._current_row < len(self.items_data)):
@@ -1501,6 +1518,11 @@ class ButtonEditorDialog(QtWidgets.QDialog):
         self.cmd_lang_combo.addItems(["python", "mel"])
         self.cmd_lang_combo.currentIndexChanged.connect(self._on_parameter_changed)
         cmd_header.addWidget(self.cmd_lang_combo)
+
+        self.run_cmd_btn = QtWidgets.QPushButton("Run Script", tab2_widget)
+        self.run_cmd_btn.setToolTip("Execute this command now to test it")
+        self.run_cmd_btn.clicked.connect(lambda: self._on_run_command(self.cmd_editor))
+        cmd_header.addWidget(self.run_cmd_btn)
         tab2_layout.addLayout(cmd_header)
 
         self.cmd_editor = CodeEditorWidget(scale=self.scale, parent=tab2_widget)
@@ -1509,9 +1531,17 @@ class ButtonEditorDialog(QtWidgets.QDialog):
         self.cmd_editor.setMinimumHeight(max(110, int(round(140 * s))))
         tab2_layout.addWidget(self.cmd_editor, 2)
 
+        dc_header = QtWidgets.QHBoxLayout()
         dc_title = QtWidgets.QLabel("Double-Click Command (optional):", tab2_widget)
         dc_title.setStyleSheet("font-weight: bold;")
-        tab2_layout.addWidget(dc_title)
+        dc_header.addWidget(dc_title)
+        dc_header.addStretch()
+
+        self.run_dcmd_btn = QtWidgets.QPushButton("Run Script", tab2_widget)
+        self.run_dcmd_btn.setToolTip("Execute double-click command now to test it")
+        self.run_dcmd_btn.clicked.connect(lambda: self._on_run_command(self.double_click_editor))
+        dc_header.addWidget(self.run_dcmd_btn)
+        tab2_layout.addLayout(dc_header)
 
         self.double_click_editor = CodeEditorWidget(scale=self.scale, parent=tab2_widget)
         self.double_click_editor.setPlaceholderText("# Optional script executed on double-click...")
@@ -1525,6 +1555,7 @@ class ButtonEditorDialog(QtWidgets.QDialog):
         self.popup_menu_tab = PopupMenuEditorTab(
             initial_items=self.current_data.get("menuItems", []),
             scale=self.scale,
+            shelf_manager=self.shelf_manager,
             parent=self.tab_widget
         )
         self.popup_menu_tab.itemsChanged.connect(self._on_parameter_changed)
@@ -2063,6 +2094,15 @@ class ButtonEditorDialog(QtWidgets.QDialog):
 
     def _on_reset_clicked(self):
         self._load_data(self.initial_data)
+
+    def _on_run_command(self, editor):
+        cmd_text = editor.toPlainText()
+        if not cmd_text.strip():
+            cmds.warning("spShelf: Command is empty.")
+            return
+        lang = self.cmd_lang_combo.currentText()
+        if self.shelf_manager:
+            self.shelf_manager.execute_command(cmd_text, lang)
 
     def _on_save_clicked(self):
         final_data = self._collect_current_data()
