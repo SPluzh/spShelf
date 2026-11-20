@@ -1,4 +1,7 @@
-# spShelf v2.3.7 (Pure Qt / PySide rewrite)
+# spShelf v2.3.8 (Pure Qt / PySide rewrite)
+# v2.3.8 - Fixed stuck window in Hold mode: added configurable options to auto-close on focus loss
+#          (Close on Focus Loss) and detect key release after command execution (Check Key After Command),
+#          preventing the menu from remaining open when invoking tools with external windows (GSTools, Arnold IPR) or slow operations.
 # v2.3.7 - Fixed command execution and string escaping: eliminated unicode_escape and destructive quote/backslash
 #          replacements, preventing 'EOL while scanning string literal' errors (e.g. speedCut), fixed popup menu
 #          sourceType retention, and routed Python execution directly through __main__ namespace matching native Maya shelf behavior.
@@ -57,6 +60,26 @@ import math
 import re
 import maya.cmds as cmds
 import maya.mel as mel
+
+
+def _get_pressed_vk_codes():
+    """Returns the set of currently pressed keyboard virtual-key codes (Windows only)."""
+    if sys.platform != "win32":
+        return set()
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        pressed = set()
+        # Check keyboard VK codes 0x08..0xFE, skipping toggle-state-only keys
+        skip_vks = {0x14, 0x90, 0x91}
+        for vk in range(0x08, 0xFF):
+            if vk in skip_vks:
+                continue
+            if user32.GetAsyncKeyState(vk) & 0x8000:
+                pressed.add(vk)
+        return pressed
+    except Exception:
+        return set()
 
 
 def extract_command_and_type(cmd_str):
@@ -3932,6 +3955,14 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.cb_close_repeat.setChecked(self.manager.settings.get("CLOSE_ON_REPEAT_FLAG", False))
         self.cb_close_repeat.toggled.connect(self._on_toggle_close_repeat)
 
+        self.cb_close_deactivate = QtWidgets.QCheckBox("Close on Focus Loss (Hold)", settings_section)
+        self.cb_close_deactivate.setChecked(self.manager.settings.get("CLOSE_ON_DEACTIVATE", True))
+        self.cb_close_deactivate.toggled.connect(self._on_toggle_close_deactivate)
+
+        self.cb_check_key_after_cmd = QtWidgets.QCheckBox("Check Key After Command (Hold)", settings_section)
+        self.cb_check_key_after_cmd.setChecked(self.manager.settings.get("CHECK_KEY_AFTER_CMD", True))
+        self.cb_check_key_after_cmd.toggled.connect(self._on_toggle_check_key_after_cmd)
+
         self.cb_under_cursor = QtWidgets.QCheckBox("Open under Cursor", settings_section)
         self.cb_under_cursor.setChecked(self.manager.settings.get("SHOW_WINDOW_UNDER_CURSOR", True))
         self.cb_under_cursor.toggled.connect(self._on_toggle_under_cursor)
@@ -3956,8 +3987,9 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.cb_dotted_sep.setChecked(self.manager.settings.get("DOTTED_SEPARATORS", False))
         self.cb_dotted_sep.toggled.connect(self._on_toggle_dotted_sep)
 
-        for cb in [self.cb_close_repeat, self.cb_under_cursor, self.cb_show_label,
-                   self.cb_hide_title, self.cb_show_sep, self.cb_horiz_sep, self.cb_dotted_sep]:
+        for cb in [self.cb_close_repeat, self.cb_close_deactivate, self.cb_check_key_after_cmd,
+                   self.cb_under_cursor, self.cb_show_label, self.cb_hide_title,
+                   self.cb_show_sep, self.cb_horiz_sep, self.cb_dotted_sep]:
             layout.addWidget(cb)
 
         # Save Settings button
@@ -3990,6 +4022,16 @@ class SpShelfWindow(QtWidgets.QWidget):
     def _on_toggle_close_repeat(self, checked):
         log_debug(f"_on_toggle_close_repeat: checked={checked}")
         self.manager.settings["CLOSE_ON_REPEAT_FLAG"] = checked
+        self.manager.save_user_data()
+
+    def _on_toggle_close_deactivate(self, checked):
+        log_debug(f"_on_toggle_close_deactivate: checked={checked}")
+        self.manager.settings["CLOSE_ON_DEACTIVATE"] = checked
+        self.manager.save_user_data()
+
+    def _on_toggle_check_key_after_cmd(self, checked):
+        log_debug(f"_on_toggle_check_key_after_cmd: checked={checked}")
+        self.manager.settings["CHECK_KEY_AFTER_CMD"] = checked
         self.manager.save_user_data()
 
     def _on_toggle_under_cursor(self, checked):
@@ -4066,6 +4108,8 @@ class SpShelfWindow(QtWidgets.QWidget):
         self.manager.settings["BUTTON_RADIUS"] = self.btn_radius_spin.value()
         self.manager.settings["FONT_SIZE"] = self.font_size_spin.value()
         self.manager.settings["CLOSE_ON_REPEAT_FLAG"] = self.cb_close_repeat.isChecked()
+        self.manager.settings["CLOSE_ON_DEACTIVATE"] = self.cb_close_deactivate.isChecked()
+        self.manager.settings["CHECK_KEY_AFTER_CMD"] = self.cb_check_key_after_cmd.isChecked()
         self.manager.settings["SHOW_WINDOW_UNDER_CURSOR"] = self.cb_under_cursor.isChecked()
         show_frame_label = self.cb_show_label.isChecked()
         self.manager.settings["SHOW_FRAME_LABEL"] = show_frame_label
@@ -4150,6 +4194,28 @@ class SpShelfWindow(QtWidgets.QWidget):
         self._drag_pos = None
         super(SpShelfWindow, self).mouseReleaseEvent(event)
 
+    def changeEvent(self, event):
+        super(SpShelfWindow, self).changeEvent(event)
+        if event.type() == QtCore.QEvent.WindowDeactivate:
+            if (
+                self.manager
+                and self.manager.settings.get("CLOSE_ON_REPEAT_FLAG", False)
+                and self.manager.settings.get("CLOSE_ON_DEACTIVATE", True)
+                and self.isVisible()
+            ):
+                if QtWidgets.QApplication.activePopupWidget() is not None:
+                    return
+                editor = getattr(self.manager, "_button_editor", None)
+                if editor is not None:
+                    try:
+                        if editor.isVisible():
+                            return
+                    except Exception:
+                        pass
+                log_debug("SpShelfWindow deactivated in Hold mode -> hiding")
+                self.manager._held_vk_codes.clear()
+                self.hide()
+
 
 # ----------------------------------------------------------------------
 # Manager Controller
@@ -4163,6 +4229,8 @@ class SpShelf:
         "SCALE_MODE": "auto",
         "CUSTOM_SCALE": 100,
         "CLOSE_ON_REPEAT_FLAG": False,
+        "CLOSE_ON_DEACTIVATE": True,
+        "CHECK_KEY_AFTER_CMD": True,
         "SHOW_WINDOW_UNDER_CURSOR": True,
         "SHOW_FRAME_LABEL": True,
         "TOOLBOX_WINDOW_STYLE": False,
@@ -4199,6 +4267,7 @@ class SpShelf:
         # Cached Qt Window instance
         self.window_widget = None
         self._button_editor = None
+        self._held_vk_codes = set()
 
     def load_user_data(self):
         """Loads shelves and settings from JSON file into memory."""
@@ -4311,6 +4380,24 @@ class SpShelf:
                 mel.eval(command)
         except Exception as e:
             cmds.warning(f"Failed to execute command: {command[:200]}... Error: {e}")
+        finally:
+            self._check_key_release_after_command()
+
+    def _check_key_release_after_command(self):
+        """Hides the window in Hold mode if the hotkey was released while the command ran."""
+        if not self.window_widget or not self.window_widget.isVisible():
+            return
+        if not self.settings.get("CLOSE_ON_REPEAT_FLAG", False):
+            return
+        if not self.settings.get("CHECK_KEY_AFTER_CMD", True):
+            return
+        if not self._held_vk_codes:
+            return
+        current_pressed = _get_pressed_vk_codes()
+        if not self._held_vk_codes.issubset(current_pressed):
+            log_debug("Hotkey released during command execution -> hiding window")
+            self._held_vk_codes.clear()
+            self.window_widget.hide()
 
     def on_shelf_collapse(self, shelf_index, collapsed):
         log_debug(f"on_shelf_collapse: shelf={shelf_index}, collapsed={collapsed}")
@@ -4879,14 +4966,22 @@ class SpShelf:
         # Handle Hold mode (Key Release)
         if close_on_repeat:
             if self.settings.get("CLOSE_ON_REPEAT_FLAG", False):
+                self._held_vk_codes.clear()
                 self.window_widget.hide()
             return
 
         # Handle Toggle mode
         if not self.settings.get("CLOSE_ON_REPEAT_FLAG", False):
             if self.window_widget.isVisible():
+                self._held_vk_codes.clear()
                 self.window_widget.hide()
                 return
+
+        # Record currently held keys for post-command key-release check in Hold mode
+        if self.settings.get("CLOSE_ON_REPEAT_FLAG", False) and self.settings.get("CHECK_KEY_AFTER_CMD", True):
+            self._held_vk_codes = _get_pressed_vk_codes()
+        else:
+            self._held_vk_codes.clear()
 
         # Check if scale needs update (e.g. monitor DPI change in Auto mode)
         target_scale = self.get_ui_scale()
