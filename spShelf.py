@@ -1,4 +1,5 @@
-# spShelf v2.3.8 (Pure Qt / PySide rewrite)
+# spShelf v2.3.9 (Pure Qt / PySide rewrite)
+# v2.3.9 - Added per-shelf "Half Size Buttons" option in shelf RMB context menu (50% width and height).
 # v2.3.8 - Fixed stuck window in Hold mode: added configurable options to auto-close on focus loss
 #          (Close on Focus Loss), detect key release after command execution (Check Key After Command),
 #          keep the window open while Settings panel is expanded (Keep Open on Settings), and close on Escape key.
@@ -452,7 +453,7 @@ class ShelfButton(QtWidgets.QToolButton):
     - Supports right-click context menu (sub-commands and deletion).
     - Supports double-click commands.
     """
-    def __init__(self, button_data, shelf_index, button_index, shelf_manager, scale=1.0, is_preview=False, parent=None):
+    def __init__(self, button_data, shelf_index, button_index, shelf_manager, scale=1.0, is_preview=False, half_size=False, parent=None):
         super(ShelfButton, self).__init__(parent)
         self.button_data = button_data
         self.shelf_index = shelf_index
@@ -461,6 +462,7 @@ class ShelfButton(QtWidgets.QToolButton):
         self.shelf_manager = shelf_manager
         self.scale = scale
         self.is_preview = is_preview
+        self.half_size = half_size
         self._is_pressed = False
         self._mmb_pressed = False
         self._mmb_drag_start_pos = QtCore.QPoint()
@@ -485,7 +487,9 @@ class ShelfButton(QtWidgets.QToolButton):
         annotation = button_data.get("annotation", "") or button_data.get("label", "")
 
         self.setToolTip(annotation)
-        btn_sz = max(24, int(round(38 * self.scale)))
+        size_mult = 0.5 if getattr(self, "half_size", False) else 1.0
+        min_btn_sz = 12 if getattr(self, "half_size", False) else 24
+        btn_sz = max(min_btn_sz, int(round(38 * self.scale * size_mult)))
         btn_w = btn_sz
         raw_width = button_data.get("width")
         if raw_width is None and button_data.get("flexibleWidthType") == 2:
@@ -497,7 +501,8 @@ class ShelfButton(QtWidgets.QToolButton):
                 # In Maya MEL, 34 and 35 are the default square shelf button widths.
                 # If width is custom (e.g. 20, 50, 100) or explicitly flexibleWidthType 2, apply it.
                 if w_val > 0 and (w_val not in (34, 35) or is_custom_type):
-                    btn_w = max(12, int(round(w_val * self.scale)))
+                    min_w = 6 if getattr(self, "half_size", False) else 12
+                    btn_w = max(min_w, int(round(w_val * self.scale * size_mult)))
             except (ValueError, TypeError):
                 pass
         self.setFixedSize(btn_w, btn_sz)
@@ -626,15 +631,16 @@ class ShelfButton(QtWidgets.QToolButton):
             painter.setRenderHint(QtGui.QPainter.TextAntialiasing)
             painter.setRenderHint(QtGui.QPainter.Antialiasing)
 
+            size_mult = 0.5 if getattr(self, "half_size", False) else 1.0
             font = painter.font()
             if hasattr(font, "setPointSizeF"):
-                font.setPointSizeF(5.0 * self.scale)
+                font.setPointSizeF(max(2.5, 5.0 * self.scale * size_mult))
             else:
-                font.setPointSize(max(3, int(round(5.0 * self.scale))))
+                font.setPointSize(max(2, int(round(5.0 * self.scale * size_mult))))
             font.setBold(True)
             painter.setFont(font)
 
-            pad = max(1, int(round(2 * self.scale)))
+            pad = max(1, int(round(2 * self.scale * size_mult)))
             text_rect = self.rect().adjusted(pad, pad, -pad, -pad)
             if self.isDown():
                 text_rect.adjust(1, 1, 1, 1)
@@ -700,8 +706,9 @@ class ShelfButton(QtWidgets.QToolButton):
                 painter = QtGui.QPainter(self)
             painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
-            tri_size = max(4.0, 5.0 * self.scale)
-            margin = max(2.0, 2.5 * self.scale)
+            size_mult = 0.5 if getattr(self, "half_size", False) else 1.0
+            tri_size = max(2.5 if getattr(self, "half_size", False) else 4.0, 5.0 * self.scale * size_mult)
+            margin = max(1.0 if getattr(self, "half_size", False) else 2.0, 2.5 * self.scale * size_mult)
             down_offset = 1.0 if self.isDown() else 0.0
 
             br_x = float(self.rect().width()) - margin + down_offset
@@ -2064,7 +2071,7 @@ class ButtonEditorDialog(QtWidgets.QDialog):
 
 class SeparatorWidget(QtWidgets.QFrame):
     """Separator line or dotted indicator for shelves with MMB drag-and-drop support."""
-    def __init__(self, horizontal=False, dotted=False, shelf_index=0, item_index=0, shelf_manager=None, scale=1.0, parent=None):
+    def __init__(self, horizontal=False, dotted=False, shelf_index=0, item_index=0, shelf_manager=None, scale=1.0, half_size=False, parent=None):
         super(SeparatorWidget, self).__init__(parent)
         self.shelf_index = shelf_index
         self.item_index = item_index
@@ -2072,21 +2079,25 @@ class SeparatorWidget(QtWidgets.QFrame):
         self.horizontal = horizontal
         self.dotted = dotted
         self.scale = scale
+        self.half_size = half_size
         self._mmb_pressed = False
         self._mmb_drag_start_pos = QtCore.QPoint()
 
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
-        btn_sz = max(24, int(round(38 * self.scale)))
+        size_mult = 0.5 if half_size else 1.0
+        min_btn_sz = 12 if half_size else 24
+        btn_sz = max(min_btn_sz, int(round(38 * self.scale * size_mult)))
 
         if dotted:
             layout = QtWidgets.QHBoxLayout(self) if horizontal else QtWidgets.QVBoxLayout(self)
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(max(1, int(round(1 * self.scale))))
-            lbl = QtWidgets.QLabel(". . . ." if horizontal else ".\n.\n.\n.")
+            lbl_text = ". . . ." if horizontal else (".\n." if half_size else ".\n.\n.\n.")
+            lbl = QtWidgets.QLabel(lbl_text)
             lbl.setAlignment(QtCore.Qt.AlignCenter)
-            font_sz = max(8, int(round(10 * self.scale)))
+            font_sz = max(6 if half_size else 8, int(round(10 * self.scale * size_mult)))
             lbl.setStyleSheet(f"color: #777777; font-weight: bold; font-size: {font_sz}px;")
             layout.addWidget(lbl)
             if horizontal:
@@ -2894,13 +2905,14 @@ class ShelfGridWidget(QtWidgets.QWidget):
     Uses independent horizontal row layouts to ensure separators maintain their compact size
     without expanding to button dimensions across multi-row shelves.
     """
-    def __init__(self, shelf_index, shelf_window, manager, scale=1.0, col_count=4, parent=None):
+    def __init__(self, shelf_index, shelf_window, manager, scale=1.0, col_count=4, half_size=False, parent=None):
         super(ShelfGridWidget, self).__init__(parent)
         self.shelf_index = shelf_index
         self.shelf_window = shelf_window
         self.manager = manager
         self.scale = scale
         self.col_count = col_count
+        self.half_size = half_size
         self.items = []
         self._drop_indicator = None
 
@@ -2915,16 +2927,21 @@ class ShelfGridWidget(QtWidgets.QWidget):
 
         self.row_layouts = {}
 
+    def _empty_btn_sz(self):
+        size_mult = 0.5 if getattr(self, "half_size", False) else 1.0
+        min_btn_sz = 12 if getattr(self, "half_size", False) else 24
+        return max(min_btn_sz, int(round(38 * self.scale * size_mult)))
+
     def sizeHint(self):
         if not self.items:
-            btn_sz = max(24, int(round(38 * self.scale)))
+            btn_sz = self._empty_btn_sz()
             min_w = max(120, int(round(160 * self.scale)))
             return QtCore.QSize(min_w, btn_sz)
         return super(ShelfGridWidget, self).sizeHint()
 
     def minimumSizeHint(self):
         if not self.items:
-            btn_sz = max(24, int(round(38 * self.scale)))
+            btn_sz = self._empty_btn_sz()
             min_w = max(120, int(round(160 * self.scale)))
             return QtCore.QSize(min_w, btn_sz)
         return super(ShelfGridWidget, self).minimumSizeHint()
@@ -2959,7 +2976,7 @@ class ShelfGridWidget(QtWidgets.QWidget):
         shelf_buttons = self.manager.shelves[self.shelf_index].get("buttons", [])
         total_count = len(shelf_buttons)
 
-        btn_sz = max(24, int(round(38 * self.scale)))
+        btn_sz = self._empty_btn_sz()
         thickness = max(2, int(round(3 * self.scale)))
 
         if not self.items:
@@ -3604,6 +3621,8 @@ class SpShelfWindow(QtWidgets.QWidget):
                 lambda pos, idx=shelf_idx, sec=section: self._show_shelf_header_menu(pos, idx, sec, sec.header_btn)
             )
 
+            half_size = shelf.get("half_size", False)
+
             # Grid layout container with MMB Drag & Drop support
             grid_widget = ShelfGridWidget(
                 shelf_index=shelf_idx,
@@ -3611,6 +3630,7 @@ class SpShelfWindow(QtWidgets.QWidget):
                 manager=self.manager,
                 scale=self.scale,
                 col_count=col_count,
+                half_size=half_size,
                 parent=section.content_widget
             )
             grid_widget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -3634,6 +3654,7 @@ class SpShelfWindow(QtWidgets.QWidget):
                         item_index=btn_idx,
                         shelf_manager=self.manager,
                         scale=self.scale,
+                        half_size=half_size,
                         parent=grid_widget
                     )
                     if horizontal_sep:
@@ -3653,6 +3674,7 @@ class SpShelfWindow(QtWidgets.QWidget):
                         button_index=btn_idx,
                         shelf_manager=self.manager,
                         scale=self.scale,
+                        half_size=half_size,
                         parent=grid_widget
                     )
                     if cur_col >= col_count:
@@ -3662,7 +3684,9 @@ class SpShelfWindow(QtWidgets.QWidget):
                     cur_col += 1
 
             if not shelf.get("buttons"):
-                btn_sz = max(24, int(round(38 * self.scale)))
+                size_mult = 0.5 if half_size else 1.0
+                min_btn_sz = 12 if half_size else 24
+                btn_sz = max(min_btn_sz, int(round(38 * self.scale * size_mult)))
                 grid_widget.setMinimumHeight(btn_sz)
 
             section.content_layout.addWidget(grid_widget)
@@ -3766,6 +3790,12 @@ class SpShelfWindow(QtWidgets.QWidget):
         vis = self.manager.shelves[shelf_index].get("label_visible", True)
         label_action = menu.addAction("Hide Label" if vis else "Show Label")
         label_action.triggered.connect(lambda: self.manager.toggle_single_shelf_label(shelf_index, not vis))
+
+        half_size = self.manager.shelves[shelf_index].get("half_size", False)
+        half_action = menu.addAction("Half Size Buttons")
+        half_action.setCheckable(True)
+        half_action.setChecked(half_size)
+        half_action.triggered.connect(lambda checked=False, hs=half_size: self.manager.toggle_shelf_half_size(shelf_index, not hs))
 
         del_action = menu.addAction("Delete Shelf")
         del_action.triggered.connect(lambda: self.manager.delete_shelf(shelf_index))
@@ -4442,6 +4472,14 @@ class SpShelf:
             self.save_user_data()
         if self.window_widget:
             self.window_widget.adjust_size_to_content()
+
+    def toggle_shelf_half_size(self, shelf_index, half_size):
+        """Toggles half-size button dimensions (50% width and height) for a specific shelf."""
+        if 0 <= shelf_index < len(self.shelves):
+            self.shelves[shelf_index]["half_size"] = bool(half_size)
+            self.save_user_data()
+            if self.window_widget:
+                self.window_widget.rebuild_shelves()
 
     def on_settings_collapse(self, key, collapsed):
         log_debug(f"on_settings_collapse: key={key}, collapsed={collapsed}")

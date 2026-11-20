@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.9]
+- **Per-Shelf Half Size Buttons**:
+    - Added **"Half Size Buttons"** toggle to the shelf right-click context menu (header and shelf grid).
+    - Scales all buttons and vertical separators in that shelf to 50% width and height (including custom-width buttons, overlay text, and dropdown corner indicators), persisted per shelf in `sp_shelf_data.json`.
+
 ## [2.3.8]
 - **Prevent Stuck Window in Hold Mode (`Close on Key Release`)**:
     - **Close on Focus Loss (`CLOSE_ON_DEACTIVATE`)**: Automatically hides `spShelf` when it loses focus to an external or modal window (such as GS Toolbox, Arnold RenderView / IPR, or export file dialogs) while holding the hotkey, with protection for internal popup menus and editor dialogs.
